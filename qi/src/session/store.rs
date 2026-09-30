@@ -1,10 +1,10 @@
+use crate::value::KeyDynValueMap;
 use crate::{
     messaging::{self, Address},
     service,
     session::{self, target::Kind, Session, WeakSession},
     Error,
 };
-use qi_value::KeyDynValueMap;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 

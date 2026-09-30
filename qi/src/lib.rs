@@ -41,10 +41,18 @@
 #![doc(test(attr(deny(warnings))))]
 #![doc = include_str!("../README.md")]
 
+// The procedural macros of `qi-macros` generate `::qi::...` paths: naming this crate `qi` in its
+// own extern prelude lets them, and the modules that use the public API, resolve inside it too.
+extern crate self as qi;
+
 pub mod auth;
 pub mod call;
 pub mod dynamic;
 mod error;
+pub mod format;
+pub mod messaging;
+#[cfg(feature = "naoqi-sim")]
+pub mod naoqi_sim;
 pub mod node;
 pub mod object;
 pub mod property;
@@ -69,8 +77,7 @@ pub use self::{
     signal::{Signal, Subscription},
 };
 pub use async_trait::async_trait;
-pub use qi_format as format;
+pub use messaging::Address;
 pub use qi_macros::{object, FromValue, IntoValue, Reflect, ToValue, Valuable};
-pub use qi_messaging::{self as messaging, Address};
 
 pub type Result<T> = std::result::Result<T, Error>;

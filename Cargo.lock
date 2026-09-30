@@ -437,22 +437,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "examples"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "clap",
- "futures",
- "libqi",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -860,29 +844,55 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
-name = "libqi"
+name = "libqi-macros-vibe"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
+ "convert_case",
+ "pretty_assertions",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "libqi-vibe"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "async-stream",
  "async-trait",
+ "base64 0.23.1",
  "bytes",
+ "clap",
+ "colored",
  "derive_more",
+ "dirs",
  "either",
  "futures",
+ "libqi-macros-vibe",
+ "machine-uid",
  "once_cell",
+ "ordered-float 5.5.0",
  "ouroboros",
  "pin-project-lite",
- "qi-format",
- "qi-macros",
- "qi-messaging",
- "qi-value",
+ "pretty_assertions",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
  "sealed",
+ "seq-macro",
  "serde",
+ "serde-value",
  "serde_json",
+ "serde_test",
  "serde_with",
+ "sha1_smol",
  "sysinfo",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-test",
  "tokio-util",
@@ -948,21 +958,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "naoqi-sim"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures",
- "libqi",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1161,104 +1156,6 @@ dependencies = [
  "syn 2.0.119",
  "version_check",
  "yansi",
-]
-
-[[package]]
-name = "qi-format"
-version = "0.1.0"
-dependencies = [
- "assert_matches",
- "bytes",
- "pretty_assertions",
- "qi-macros",
- "qi-value",
- "serde",
- "serde-value",
- "serde_json",
- "serde_with",
- "thiserror",
-]
-
-[[package]]
-name = "qi-macros"
-version = "0.1.0"
-dependencies = [
- "assert_matches",
- "convert_case",
- "pretty_assertions",
- "proc-macro2",
- "qi-macros",
- "qi-value",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "qi-messaging"
-version = "0.1.0"
-dependencies = [
- "assert_matches",
- "async-stream",
- "bytes",
- "derive_more",
- "either",
- "futures",
- "pin-project-lite",
- "qi-format",
- "qi-value",
- "rcgen",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde-value",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-test",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "qi-tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "clap",
- "colored",
- "futures",
- "libqi",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "qi-value"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "derive_more",
- "dirs",
- "machine-uid",
- "once_cell",
- "ordered-float 5.5.0",
- "qi-macros",
- "seq-macro",
- "serde",
- "serde-value",
- "serde_json",
- "serde_test",
- "serde_with",
- "sha1_smol",
- "thiserror",
- "uuid",
 ]
 
 [[package]]
@@ -1714,9 +1611,9 @@ name = "tests-macros"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
+ "libqi-macros-vibe",
+ "libqi-vibe",
  "pretty_assertions",
- "qi-macros",
- "qi-value",
  "syn 2.0.119",
  "trybuild",
 ]
@@ -2422,9 +2319,9 @@ dependencies = [
 
 [[package]]
 name = "yoke-derive"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78"
+checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",

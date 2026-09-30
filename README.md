@@ -21,14 +21,15 @@ completed into a full stack.
 
 ```toml
 [dependencies]
-qi = { package = "libqi", version = "0.1" }   # used as `qi` in code
+qi = { package = "libqi-vibe", version = "0.1" }   # used as `qi` in code
 ```
 
-The package is `libqi` on crates.io because the name `qi` is taken; the library itself is
+The package is `libqi-vibe` on crates.io (the name `qi` is taken); the library itself is
 named `qi`, so `use qi::...` works as in the examples. Rust 1.90 or later is required.
 
-The command-line tools install with `cargo install qi-tools` (the `qi-cli` command) and
-`cargo install naoqi-sim`; prebuilt binaries for Linux, macOS and Windows are attached to
+The command-line tools are features of the same crate:
+`cargo install libqi-vibe --features cli --bin qi-cli` and
+`cargo install libqi-vibe --features naoqi-sim --bin naoqi-sim`; prebuilt binaries for Linux, macOS and Windows are attached to
 the [releases](https://github.com/victorpaleologue/libqi-rs-vibe/releases).
 
 ## Quick start
@@ -61,19 +62,16 @@ trait TextToSpeech {
 The macro produces a typed client for remote objects and an adapter that exposes an
 implementation of the trait as a service. Typed interfaces, services, signals, properties
 and object passing are shown in the documentation of the `qi` crate and in
-[`examples/`](examples/).
+[`qi/examples/`](qi/examples/).
 
 ## Crates
 
+Two crates, released together:
+
 | Crate | Description |
 |---|---|
-| [`qi`](qi/) (package `libqi`) | The framework: nodes, sessions, objects, signals, properties, services, the service directory, and the `#[qi::object]` macro. Start here. |
-| [`qi-value`](qi-value/) | The type system: types, signatures, dynamic values and conversions. |
-| [`qi-format`](qi-format/) | The binary serialization format, as a `serde` data format. |
-| [`qi-messaging`](qi-messaging/) | The messaging protocol: messages, channels, client and server loops. |
-| [`qi-macros`](qi-macros/) | Procedural macros: `#[qi::object]` and the value derives. |
-| [`qi-tools`](qi-tools/) | `qi-cli`, a command-line tool to inspect and drive services. |
-| [`naoqi-sim`](naoqi-sim/) | A simulated NAOqi robot: the services used by `naoqi_driver2` and robot HALs, without a robot. |
+| [`libqi-vibe`](qi/) (used as `qi`) | The framework. Modules: `qi::value` (type system, signatures, dynamic values), `qi::format` (binary format, as a `serde` data format), `qi::messaging` (messages, channels, client and server loops), nodes, sessions, objects, signals, properties, services and the service directory. Feature `cli`: the `qi-cli` command. Feature `naoqi-sim`: the `qi::naoqi_sim` module and the `naoqi-sim` command, a simulated NAOqi robot. |
+| [`libqi-macros-vibe`](qi-macros/) | Procedural macros (`#[qi::object]`, the value derives), re-exported by `libqi-vibe`. |
 
 The design is described in [`docs/architecture.md`](docs/architecture.md), and how the
 implementation was validated against `libqi`, the ROS 2 driver of the robots and the Arora
@@ -113,8 +111,9 @@ included) connect to as to a real robot:
 naoqi-sim --robot nao --listen tcp://0.0.0.0:9559
 ```
 
-From a checkout, prefix the commands with `cargo run -p qi-tools --bin qi-cli --` and
-`cargo run -p naoqi-sim --`.
+From a checkout, prefix the commands with
+`cargo run -p libqi-vibe --features cli --bin qi-cli --` and
+`cargo run -p libqi-vibe --features naoqi-sim --bin naoqi-sim --`.
 
 ## Building and testing
 

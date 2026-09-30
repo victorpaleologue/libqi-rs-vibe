@@ -2,8 +2,8 @@
 
 This directory is a standalone CMake project built against the reference C++
 implementation of the qi framework (`libqi`, tag `qi-framework-v4.0.5`). It is
-used to check that the Rust crates (`qi-value`, `qi-format`, `qi-messaging`,
-`qi`) produce byte-identical serialization and interoperate with real libqi
+used to check that the Rust crate (`libqi-vibe`, used as `qi`) produces byte-identical
+serialization and interoperate with real libqi
 processes. Nothing here is part of the Rust workspace.
 
 ## Building

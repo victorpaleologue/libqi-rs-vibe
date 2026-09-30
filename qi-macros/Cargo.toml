@@ -1,5 +1,5 @@
 [package]
-name = "qi-macros"
+name = "libqi-macros-vibe"
 description = "Procedural macros of the qi framework: #[qi::object] and the value derives"
 
 edition.workspace = true
@@ -14,6 +14,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [lib]
+# The package is `libqi-macros-vibe` on crates.io; the library is used as `qi_macros`.
+name = "qi_macros"
 proc-macro = true
 
 [dependencies]
@@ -26,5 +28,3 @@ convert_case = "0.10.0"
 assert_matches = { workspace = true }
 syn = { workspace = true }
 pretty_assertions = { workspace = true }
-qi-macros = { path = "../qi-macros" }  # path only: dropped on publish, avoids a dev-dependency cycle
-qi-value = { path = "../qi-value" }  # path only: dropped on publish, avoids a dev-dependency cycle

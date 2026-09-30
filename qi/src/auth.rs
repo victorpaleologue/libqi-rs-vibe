@@ -1,4 +1,4 @@
-use qi_value::{KeyDynValueMap, Value};
+use crate::value::{KeyDynValueMap, Value};
 
 pub trait Authenticator {
     fn authenticate(&self, parameters: KeyDynValueMap) -> Result<(), Error>;

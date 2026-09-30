@@ -10,7 +10,7 @@ real users of NAOqi. Everything below ran on the same machine, over TCP loopback
 strings, containers, structures with annotations, dynamics, optionals, raw buffers, meta
 objects, service infos, capability maps, and every message type: authentication, calls,
 replies, errors, cancel, canceled, events, posts, capabilities). The output is committed as
-`interop/vectors/libqi-4.0.5-values.jsonl`, and `qi-format/tests/libqi_vectors.rs` and
+`interop/vectors/libqi-4.0.5-values.jsonl`, and `qi/tests/format_libqi_vectors.rs` and
 `qi/tests/libqi_vectors.rs` check that the Rust crates produce exactly those bytes and decode
 them back, through static Rust types and through the dynamic `Value` representation.
 
@@ -43,7 +43,7 @@ The ROS 2 driver of the robots (`ros-naoqi/naoqi_driver2`, with its `naoqi_libqi
 `naoqi-sim`:
 
 ```sh
-cargo build -p naoqi-sim -p qi-tools
+cargo build -p libqi-vibe --features cli,naoqi-sim
 naoqi-sim/scripts/validate-naoqi-driver2.sh    # needs a sourced ROS 2 workspace with naoqi_driver
 ```
 

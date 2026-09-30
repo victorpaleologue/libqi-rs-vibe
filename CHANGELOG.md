@@ -4,8 +4,8 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crates follow
 [Semantic Versioning](https://semver.org/): until 1.0, minor versions may break the API.
 
-Every crate of the workspace (`libqi`, `qi-value`, `qi-format`, `qi-messaging`, `qi-macros`,
-`qi-tools`, `naoqi-sim`) shares one version number and is released together.
+The two crates, `libqi-vibe` and `libqi-macros-vibe`, share one version number and are
+released together.
 
 ## [Unreleased]
 
@@ -18,16 +18,16 @@ The crates require Rust 1.90 or later and are licensed under the BSD 3-Clause li
 
 ### Added
 
-- `libqi` (used as `qi`): nodes, sessions, services, objects, signals, properties, object
+- `libqi-vibe` (used as `qi`): nodes, sessions, services, objects, signals, properties, object
   passing in both directions, the special bound-object actions, cooperative cancellation,
   capability negotiation, user/token authentication, a hostable service directory with its
   signals, and TLS transports (`tcps://`, the endpoint of NAOqi 2.9 robots).
-- `#[qi::object]`: a trait becomes a meta object, an `Object` adapter and a typed client.
-- `qi-value`, `qi-format`: the type system and binary format, byte-identical with `libqi`
+- `#[qi::object]` (in `libqi-macros-vibe`): a trait becomes a meta object, an `Object` adapter and a typed client.
+- `qi::value`, `qi::format`: the type system and binary format, byte-identical with `libqi`
   4.0.5 on 66 reference fixtures, with runtime `Value` conversion to callee signatures.
-- `qi-messaging`: message framing, TCP and TLS channels, client and server loops.
-- `qi-tools`: the `qi-cli` command (`info`, `call`, `post`, `watch`, `get`, `set`).
-- `naoqi-sim`: a simulated NAO or Pepper with 16 NAOqi services, validated against the
+- `qi::messaging`: message framing, TCP and TLS channels, client and server loops.
+- Feature `cli`: the `qi-cli` command (`info`, `call`, `post`, `watch`, `get`, `set`).
+- Feature `naoqi-sim`: `qi::naoqi_sim` and the `naoqi-sim` command, a simulated NAO or Pepper with 16 NAOqi services, validated against the
   ROS 2 `naoqi_driver2`.
 - Interoperability harness against C++ `libqi` (`interop/`), architecture and validation
   documentation, contributed patches for arora-sdk and the ros-naoqi build.

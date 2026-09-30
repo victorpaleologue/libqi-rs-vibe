@@ -20,6 +20,7 @@
 
 mod server;
 
+use crate::value::KeyDynValueMap;
 use crate::{
     auth::Authenticator,
     object::{self, AnyObject, ObjectClient},
@@ -31,7 +32,6 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::{stream, StreamExt, TryStreamExt};
-use qi_value::KeyDynValueMap;
 use serde_with::serde_as;
 use std::{collections::HashMap, sync::Arc};
 use tokio::task;

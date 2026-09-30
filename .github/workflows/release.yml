@@ -28,7 +28,7 @@ jobs:
         id: version
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "libqi") | .version')
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "libqi-vibe") | .version')
           if [ "$tag" != "$version" ]; then
             echo "tag v$tag does not match the workspace version $version" >&2
             exit 1
@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: cargo test --workspace --release
+      - run: cargo test --workspace --release --all-features
       - run: cargo publish --workspace --dry-run
 
   binaries:
@@ -60,7 +60,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p qi-tools -p naoqi-sim
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p libqi-vibe --features cli,naoqi-sim --bin qi-cli --bin naoqi-sim
       - name: Archive
         shell: bash
         run: |
@@ -109,8 +109,8 @@ jobs:
           echo "## Install" >> notes.md
           echo "" >> notes.md
           echo '```sh' >> notes.md
-          echo "cargo install qi-tools@$version   # qi-cli" >> notes.md
-          echo "cargo install naoqi-sim@$version" >> notes.md
+          echo "cargo install libqi-vibe@$version --features cli --bin qi-cli" >> notes.md
+          echo "cargo install libqi-vibe@$version --features naoqi-sim --bin naoqi-sim" >> notes.md
           echo '```' >> notes.md
           echo "" >> notes.md
           echo "Prebuilt \`qi-cli\` and \`naoqi-sim\` binaries are attached below." >> notes.md
@@ -141,7 +141,7 @@ jobs:
           missing=()
           # Dependency order; `cargo publish --workspace` would also sort them, but it
           # refuses when some crates of the workspace are already published.
-          for crate in qi-macros qi-value qi-format qi-messaging libqi qi-tools naoqi-sim; do
+          for crate in libqi-macros-vibe libqi-vibe; do
             status=$(curl -sS -o /dev/null -w '%{http_code}' -A "libqi-rs-vibe release workflow" \
               "https://crates.io/api/v1/crates/$crate/$version")
             if [ "$status" = "200" ]; then

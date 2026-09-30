@@ -18,6 +18,7 @@ pub use self::capabilities::Capabilities;
 pub(crate) use self::store::Store;
 pub use self::target::Target;
 use self::{control::Control, handler::SessionHandler, host::ObjectHost};
+use crate::messaging::Address;
 use crate::{
     auth::Authenticator,
     error::Error,
@@ -30,7 +31,6 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::{stream::FusedStream, Sink, StreamExt, TryStream};
-use qi_messaging::Address;
 use serde::de::DeserializeSeed;
 use std::{
     collections::HashMap,
@@ -768,7 +768,7 @@ mod tests {
         let (server_send, mut recv_from_server) = mpsc::unbounded();
         spawn(serve_client(
             server_recv.map(Ok::<_, Infallible>),
-            server_send.sink_map_err(qi_messaging::Error::link_lost),
+            server_send.sink_map_err(crate::messaging::Error::link_lost),
             Some(Arc::new(auth)),
             SharedServices::default(),
         ));
@@ -828,7 +828,7 @@ mod tests {
         let (server_send, mut recv_from_server) = mpsc::unbounded();
         let task = spawn(serve_client(
             server_recv.map(Ok::<_, Infallible>),
-            server_send.sink_map_err(qi_messaging::Error::link_lost),
+            server_send.sink_map_err(crate::messaging::Error::link_lost),
             Some(Arc::new(auth)),
             SharedServices::default(),
         ));
@@ -878,13 +878,13 @@ mod tests {
         let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
         spawn(serve_client(
             client_to_server_rx.map(Ok::<_, Infallible>),
-            server_to_client_tx.sink_map_err(qi_messaging::Error::link_lost),
+            server_to_client_tx.sink_map_err(crate::messaging::Error::link_lost),
             None,
             SharedServices::default(),
         ));
         let session = Session::connect(
             server_to_client_rx.map(Ok::<_, Infallible>),
-            client_to_server_tx.sink_map_err(qi_messaging::Error::link_lost),
+            client_to_server_tx.sink_map_err(crate::messaging::Error::link_lost),
             Default::default(),
             SharedServices::default(),
         )

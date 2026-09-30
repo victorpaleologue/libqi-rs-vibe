@@ -1,5 +1,5 @@
-use qi_messaging::{Address, AddressError};
-use qi_value as value;
+use crate::messaging::{Address, AddressError};
+use crate::value;
 use serde_with::serde_as;
 use std::str::FromStr;
 use url::Url;

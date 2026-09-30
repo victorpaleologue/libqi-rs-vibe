@@ -9,8 +9,7 @@ A release is a git tag `vX.Y.Z` on `main` whose version equals the workspace ver
    Windows (x86_64), and attaches the archives and their checksums to a GitHub release
    whose notes are the changelog section;
 3. publishes to crates.io the crates of the workspace that are not there yet at that
-   version, in dependency order (`qi-macros`, `qi-value`, `qi-format`, `qi-messaging`,
-   `libqi`, `qi-tools`, `naoqi-sim`), using the `CARGO_REGISTRY_TOKEN` secret of the
+   version, in dependency order (`libqi-macros-vibe`, then `libqi-vibe`), using the `CARGO_REGISTRY_TOKEN` secret of the
    `crates.io` environment. Crates already published at that version are skipped, so the
    workflow can be re-run and the first release can be published by hand.
 
@@ -52,8 +51,8 @@ ownership under your crates.io account:
 ```sh
 cargo login                              # paste a token with publish-new scope
 cargo publish --workspace --dry-run      # packages, verifies, publishes nothing
-cargo publish --workspace                # publishes all crates in dependency order
+cargo publish --workspace                # publishes both crates in dependency order
 ```
 
 `cargo publish --workspace` needs Cargo 1.90 or later. Once the crates exist, add other
-owners with `cargo owner --add <github-login> libqi` (and each other crate).
+owners with `cargo owner --add <github-login> libqi-vibe` (and `libqi-macros-vibe`).

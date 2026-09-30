@@ -13,7 +13,7 @@ Tools such as `qicli trace` and Choregraphe's profiler call these members and fa
 
 ## Work
 
-- Add the seven members to the meta object built by `qi/src/object/adapter.rs` for every hosted object, with libqi's ids and signatures (`libqi/qi/type/detail/manageable.hpp`, `src/type/manageable.cpp`).
+- Add the seven members to the meta object built by `qi/src/object/generic.rs` for every hosted object, with libqi's ids and signatures (`libqi/qi/type/detail/manageable.hpp`, `src/type/manageable.cpp`).
 - Keep per-action call counts and durations when stats are enabled; emit `traceObject` events (`(IiIm(ll)i)<EventTrace,...>`) when tracing is enabled.
 - Extend `interop/vectors` with a meta-object fixture including these members so byte identity keeps holding.
 

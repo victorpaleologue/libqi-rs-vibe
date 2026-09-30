@@ -1,14 +1,8 @@
 [workspace]
 members = [
-  "qi-value",
-  "qi-macros",
-  "qi-format",
-  "qi-messaging",
   "qi",
-  "examples",
+  "qi-macros",
   "tests-macros",
-  "qi-tools",
-  "naoqi-sim",
 ]
 resolver = "2"
 
@@ -24,12 +18,6 @@ keywords = ["naoqi", "libqi", "robotics", "rpc", "pepper"]
 categories = ["network-programming", "science::robotics"]
 
 [workspace.dependencies]
-# Crates of this workspace: the versions are what dependents on crates.io resolve to.
-qi-macros = { path = "qi-macros", version = "0.1.0" }
-qi-value = { path = "qi-value", version = "0.1.0" }
-qi-format = { path = "qi-format", version = "0.1.0" }
-qi-messaging = { path = "qi-messaging", version = "0.1.0" }
-libqi = { path = "qi", version = "0.1.0" }
 rcgen = { version = "0.13.2", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pki-types = { version = "1.12", features = ["std"] }

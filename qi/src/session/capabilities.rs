@@ -6,8 +6,8 @@
 //! shared capabilities decide the behavior of the messaging layer: wire layout of object
 //! references, availability of call cancellation, etc.
 
+use crate::value::{IntoValue, KeyDynValueMap};
 use once_cell::sync::Lazy;
-use qi_value::{IntoValue, KeyDynValueMap};
 
 /// The set of capabilities known to this implementation.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

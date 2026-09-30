@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use qi_value::{
+use qi::value::{
     ty::{StructField, Tuple},
     AsRaw, IntoValue, Type, Value,
 };
@@ -13,7 +13,7 @@ use std::borrow::Cow;
     qi_macros::IntoValue,
     qi_macros::FromValue,
 )]
-#[qi(value(crate = "qi_value"))]
+#[qi(value(crate = "qi::value"))]
 #[allow(dead_code)]
 struct Basic {
     s: String,
@@ -24,7 +24,7 @@ struct Basic {
 
 #[test]
 fn test_basic_derive_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_matches!(
         Basic::ty(),
         Some(Type::Tuple(Tuple::Struct { name, fields })) => {
@@ -68,7 +68,7 @@ fn test_basic_derive_reflect() {
 
 #[test]
 fn test_basic_derive_to_value() {
-    use qi_value::ToValue;
+    use qi::value::ToValue;
     let b = Basic {
         s: "cookies".to_owned(),
         b: true,
@@ -103,7 +103,7 @@ fn test_basic_derive_to_value() {
 
 #[test]
 fn test_basic_derive_into_value() {
-    use qi_value::IntoValue;
+    use qi::value::IntoValue;
     let b = Basic {
         s: "muffins".to_owned(),
         b: false,
@@ -138,7 +138,7 @@ fn test_basic_derive_into_value() {
 
 #[test]
 fn test_basic_derive_from_value() {
-    use qi_value::{FromValue, IntoValue};
+    use qi::value::{FromValue, IntoValue};
     let value = ("cheesecake", true, (), [10, 9, 8, 7].as_slice()).into_value();
     assert_eq!(
         Basic::from_value(value).unwrap(),
@@ -160,7 +160,7 @@ fn test_basic_derive_from_value() {
     qi_macros::IntoValue,
     qi_macros::FromValue,
 )]
-#[qi(value(crate = "qi_value"))]
+#[qi(value(crate = "qi::value"))]
 #[allow(dead_code)]
 struct Borrows<'a, 'b> {
     s: &'a str,
@@ -170,7 +170,7 @@ struct Borrows<'a, 'b> {
 
 #[test]
 fn test_borrows_derive_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_matches!(
         Borrows::ty(),
         Some(Type::Tuple(Tuple::Struct { name, fields })) => {
@@ -191,7 +191,7 @@ fn test_borrows_derive_reflect() {
 
 #[test]
 fn test_borrows_derive_to_value() {
-    use qi_value::ToValue;
+    use qi::value::ToValue;
     let sbuf = String::from("cupcakes");
     let rbuf = vec![1, 20, 100, 200];
     let b = Borrows { s: &sbuf, r: &rbuf };
@@ -213,7 +213,7 @@ fn test_borrows_derive_to_value() {
 
 #[test]
 fn test_borrows_derive_into_value() {
-    use qi_value::IntoValue;
+    use qi::value::IntoValue;
     let sbuf = String::from("apples");
     let rbuf = vec![7, 5, 3, 2, 1];
     let b = Borrows { s: &sbuf, r: &rbuf };
@@ -235,7 +235,7 @@ fn test_borrows_derive_into_value() {
 
 #[test]
 fn test_borrows_derive_from_value() {
-    use qi_value::FromValue;
+    use qi::value::FromValue;
     let sbuf = String::from("bananas");
     let rbuf = vec![255, 128, 64, 32, 16];
     let value = (&sbuf, AsRaw(&rbuf)).into_value();
@@ -254,7 +254,7 @@ fn test_borrows_derive_from_value() {
     qi_macros::IntoValue,
     qi_macros::FromValue,
 )]
-#[qi(value(crate = "qi_value", transparent))]
+#[qi(value(crate = "qi::value", transparent))]
 #[allow(dead_code)]
 struct Transparent {
     s: String,
@@ -262,13 +262,13 @@ struct Transparent {
 
 #[test]
 fn test_transparent_derive_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_eq!(Transparent::ty(), Some(Type::String));
 }
 
 #[test]
 fn test_transparent_derive_to_value() {
-    use qi_value::ToValue;
+    use qi::value::ToValue;
     assert_eq!(
         Transparent {
             s: "mangoes".to_owned()
@@ -280,7 +280,7 @@ fn test_transparent_derive_to_value() {
 
 #[test]
 fn test_transparent_derive_into_value() {
-    use qi_value::IntoValue;
+    use qi::value::IntoValue;
     assert_eq!(
         Transparent {
             s: "pears".to_owned()
@@ -292,7 +292,7 @@ fn test_transparent_derive_into_value() {
 
 #[test]
 fn test_transparent_derive_from_value() {
-    use qi_value::FromValue;
+    use qi::value::FromValue;
     let value = "grapes".into_value();
     assert_eq!(
         Transparent::from_value(value).unwrap(),
@@ -311,36 +311,36 @@ fn test_transparent_derive_from_value() {
     qi_macros::IntoValue,
     qi_macros::FromValue,
 )]
-#[qi(value(crate = "qi_value", transparent))]
+#[qi(value(crate = "qi::value", transparent))]
 struct Empty;
 
 #[test]
 fn test_empty_derive_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_eq!(Empty::ty(), Some(Type::Unit));
 }
 
 #[test]
 fn test_empty_derive_to_value() {
-    use qi_value::ToValue;
+    use qi::value::ToValue;
     assert_eq!(Empty.to_value(), Value::Unit);
 }
 
 #[test]
 fn test_empty_derive_into_value() {
-    use qi_value::IntoValue;
+    use qi::value::IntoValue;
     assert_eq!(Empty.into_value(), Value::Unit);
 }
 
 #[test]
 fn test_empty_derive_from_value() {
-    use qi_value::FromValue;
+    use qi::value::FromValue;
     assert_eq!(Empty::from_value(Value::Unit).unwrap(), Empty);
     assert!(Empty::from_value(Value::Int32(1)).is_err());
 }
 
 #[derive(qi_macros::Reflect, qi_macros::ToValue, qi_macros::IntoValue, qi_macros::FromValue)]
-#[qi(value(crate = "qi_value", case = "camelCase"))]
+#[qi(value(crate = "qi::value", case = "camelCase"))]
 struct Case {
     my_field_has_a_name_with_underscores: i32,
     #[qi(value(case = "UPPER_SNAKE"))]
@@ -349,7 +349,7 @@ struct Case {
 
 #[test]
 fn test_derive_case_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_matches!(
         Case::ty(),
         Some(Type::Tuple(Tuple::Struct { name, fields })) => {
@@ -369,7 +369,7 @@ fn test_derive_case_reflect() {
 }
 
 #[derive(qi_macros::Reflect, qi_macros::ToValue, qi_macros::IntoValue, qi_macros::FromValue)]
-#[qi(value(crate = "qi_value"))]
+#[qi(value(crate = "qi::value"))]
 struct FieldRename {
     #[qi(value(name = "b"))]
     a: i32,
@@ -377,7 +377,7 @@ struct FieldRename {
 
 #[test]
 fn test_derive_rename_reflect() {
-    use qi_value::Reflect;
+    use qi::value::Reflect;
     assert_matches!(
         FieldRename::ty(),
         Some(Type::Tuple(Tuple::Struct { name, fields })) => {

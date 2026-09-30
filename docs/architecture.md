@@ -12,25 +12,32 @@ are not obvious from the code. The reference material extracted from `libqi` (bi
 format, messaging protocol, objects, signals and properties, service directory) lives
 in `interop/cpp/README.md` and in the byte fixtures under `interop/vectors/`.
 
-## Crates
+## Crates and modules
 
-| Crate | Role |
+The implementation is one crate, `libqi-vibe` (library `qi`), plus the procedural macros
+that Rust requires in a crate of their own, `libqi-macros-vibe`. The crate is layered in
+modules, each depending only on the ones above it:
+
+| Module | Role |
 |---|---|
-| `qi-value` | The type system: `Type` and `Signature`, the dynamic `Value`, conversions between Rust types and values (`Reflect`, `ToValue`, `IntoValue`, `FromValue`), object references and meta objects, key/dynamic-value maps, machine identifiers. |
-| `qi-format` | The binary format of `libqi` as a `serde` data format (`to_bytes`, `from_bytes`), schema-driven: values are encoded and decoded according to their type, without tags. |
-| `qi-messaging` | The messaging protocol: message framing (`Message`, `codec`), TCP channels, the client (`Client`: call, post, event, cancellation) and server (`Server`: dispatch of calls, posts and events to handlers, cooperative cancellation) loops, and the `Endpoint` that runs both over one channel. |
-| `qi-macros` | Procedural macros: the `Reflect`/`ToValue`/`IntoValue`/`FromValue`/`Valuable` derives for structures, and the `#[qi::object]` attribute for object interfaces. |
-| `qi` | The framework: sessions and capabilities, authentication, objects (`Object`, `AnyObject`, `ObjectClient`, `ObjectBuilder`), signals and properties, services and the service directory, nodes. This is the crate applications use. |
-| `qi-tools` | The `qi-cli` command-line tool (inspect services, call methods, watch signals, get and set properties). |
-| `naoqi-sim` | A simulated NAOqi robot exposing the services used by `naoqi_driver2` and by robot HALs, for tests and development without a robot. |
-| `examples`, `tests-macros` | Runnable examples and compile tests of the macros. |
-| `interop/` | Out of the Cargo workspace: the C++ harness built against `libqi` 4.0.5 and the byte fixtures it generates. |
+| `qi::value` | The type system: `Type` and `Signature`, the dynamic `Value`, conversions between Rust types and values (`Reflect`, `ToValue`, `IntoValue`, `FromValue`), object references and meta objects, key/dynamic-value maps, machine identifiers. |
+| `qi::format` | The binary format of `libqi` as a `serde` data format (`to_bytes`, `from_slice`), schema-driven: values are encoded and decoded according to their type, without tags. |
+| `qi::messaging` | The messaging protocol: message framing (`Message`, `codec`), TCP and TLS channels, the client (`Client`: call, post, event, cancellation) and server (`Server`: dispatch of calls, posts and events to handlers, cooperative cancellation) loops, and the `Endpoint` that runs both over one channel. |
+| `qi` (the rest) | The framework: sessions and capabilities, authentication, objects (`Object`, `AnyObject`, `ObjectClient`, `ObjectBuilder`), signals and properties, services and the service directory, nodes. |
+| `qi::naoqi_sim` (feature `naoqi-sim`) | A simulated NAOqi robot exposing the services used by `naoqi_driver2` and by robot HALs; the `naoqi-sim` command runs it. |
 
-Each crate depends only on the ones above it in the table. `qi-value` and
-`qi-format` know nothing about networking; `qi-messaging` knows nothing about the
-type system beyond raw payloads; `qi` binds everything together.
+`libqi-macros-vibe` holds the `Reflect`/`ToValue`/`IntoValue`/`FromValue`/`Valuable`
+derives and the `#[qi::object]` attribute; `qi` re-exports them. The feature `cli` adds the
+`qi-cli` command (inspect services, call methods, watch signals, get and set properties).
+`tests-macros` holds compile tests of the macros, and `interop/`, outside the Cargo
+workspace, the C++ harness built against `libqi` 4.0.5 and the byte fixtures it generates.
 
-## The type system and the binary format (`qi-value`, `qi-format`)
+`qi::value` and `qi::format` know nothing about networking; `qi::messaging` knows nothing
+about the type system beyond raw payloads; the rest of `qi` binds everything together. The
+macros generate `::qi::...` paths, which resolve inside the crate too through
+`extern crate self as qi`.
+
+## The type system and the binary format (`qi::value`, `qi::format`)
 
 Values of the `qi` type system are described by `Type` (unit, booleans, integers of
 every width, floats, strings, raw buffers, optionals, lists, maps, tuples with
@@ -69,7 +76,7 @@ NAOqi APIs.
 Meta objects (`MetaObject`, `MetaMethod`, `MetaSignal`, `MetaProperty`) are values
 too, with the exact field order and sorted member maps of `libqi`.
 
-## Messaging (`qi-messaging`)
+## Messaging (`qi::messaging`)
 
 Messages carry a 28-byte little-endian header (magic, id, payload size, version,
 type, flags, service, object and action identifiers) and a payload. The types are
@@ -167,7 +174,7 @@ reference implementation does.
 `interop/cpp` is a CMake project built against `libqi` 4.0.5 that provides a value
 dumper, a standalone service directory, a reference test service and a scenario
 client. `interop/vectors/libqi-4.0.5-values.jsonl` holds the bytes `libqi` produces
-for 66 values and messages; `qi-format/tests/libqi_vectors.rs` and
+for 66 values and messages; `qi/tests/format_libqi_vectors.rs` and
 `qi/tests/libqi_vectors.rs` check that the Rust crates produce and accept exactly
 those bytes. `qi/tests/interop_cpp.rs` spawns the C++ processes and runs every
 combination of C++ and Rust directories, services and clients (skipped when the

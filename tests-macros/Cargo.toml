@@ -10,8 +10,8 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-qi-macros = { path = "../qi-macros" }
-qi-value = { path = "../qi-value" }
+qi = { package = "libqi-vibe", path = "../qi" }
+qi-macros = { package = "libqi-macros-vibe", path = "../qi-macros" }
 trybuild = "1.0.111"
 assert_matches = "1.5.0"
 syn = { version = "2.0.110", features = ["extra-traits"] }

@@ -1,8 +1,7 @@
-# qi-macros
+# libqi-macros-vibe
 
 Procedural macros of the `qi` framework. The crate is not used directly: the macros are
-re-exported by the [`libqi`](https://crates.io/crates/libqi) crate (used as `qi`) and by
-`qi-value`.
+re-exported by the [`libqi-vibe`](https://crates.io/crates/libqi-vibe) crate, used as `qi`.
 
 - `#[qi::object]` turns a trait into a `qi` interface: a meta object, an object adapter
   that exposes an implementation to the network, and a typed client for remote objects.

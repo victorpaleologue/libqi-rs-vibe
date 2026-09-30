@@ -2,7 +2,7 @@
 //! the `qi` framework (libqi 4.0.5), `interop/vectors/libqi-4.0.5-values.jsonl`, for the rows
 //! that map to types of the `qi` crate: service infos, capability maps and messages.
 //!
-//! The other value rows are checked in `qi-format/tests/libqi_vectors.rs`, which also verifies
+//! The other value rows are checked in `qi/tests/format_libqi_vectors.rs`, which also verifies
 //! that the two files together cover every row of the fixture exactly once. The list of value rows
 //! checked here, [`VALUE_ROWS_CHECKED_HERE`], must be kept in sync with the list of delegated rows
 //! of that file.
@@ -290,7 +290,7 @@ fn value_case(name: &str) -> Option<ValueCheck> {
 }
 
 /// The value rows this file checks. Keep in sync with `DELEGATED_TO_QI_CRATE` in
-/// `qi-format/tests/libqi_vectors.rs`.
+/// `qi/tests/format_libqi_vectors.rs`.
 const VALUE_ROWS_CHECKED_HERE: &[&str] = &[
     "serviceinfo_calculator",
     "serviceinfo_servicedirectory_no_uid",
