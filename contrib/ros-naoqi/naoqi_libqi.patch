@@ -1,0 +1,473 @@
+diff --git a/ka/uri/parsing.hpp b/ka/uri/parsing.hpp
+index 074d717..b7512de 100644
+--- a/ka/uri/parsing.hpp
++++ b/ka/uri/parsing.hpp
+@@ -194,7 +194,7 @@ struct predicate_and_t {
+   ka::product_t<Pred...> preds;
+ 
+ // Regular:
+-  KA_GENERATE_FRIEND_REGULAR_OPS_1(predicate_and_t, pred)
++  KA_GENERATE_FRIEND_REGULAR_OPS_1(predicate_and_t, preds)
+ 
+ // Predicate<T...>:
+   template<typename... T> constexpr
+@@ -238,7 +238,7 @@ struct predicate_or_t {
+   ka::product_t<Pred...> preds;
+ 
+ // Regular:
+-  KA_GENERATE_FRIEND_REGULAR_OPS_1(predicate_or_t, pred)
++  KA_GENERATE_FRIEND_REGULAR_OPS_1(predicate_or_t, preds)
+ 
+ // Predicate<T...>:
+   template<typename... T> constexpr
+diff --git a/qi/type/detail/bindtype.hxx b/qi/type/detail/bindtype.hxx
+index 0bed84d..b064460 100644
+--- a/qi/type/detail/bindtype.hxx
++++ b/qi/type/detail/bindtype.hxx
+@@ -190,34 +190,14 @@ namespace qi
+         using type = boost::mpl::vector<>;
+       };
+ 
+-      template<typename P1>
+-      struct BilistToSeq<boost::_bi::list1<P1> >
+-      {
+-        using type = typename boost::mpl::vector<P1>;
+-      };
+-
+-      template<typename P1, typename P2>
+-      struct BilistToSeq<boost::_bi::list2<P1, P2> >
+-      {
+-        using type = typename boost::mpl::vector<P1, P2>;
+-      };
+-
+-      template<typename P1, typename P2, typename P3>
+-      struct BilistToSeq<boost::_bi::list3<P1, P2, P3> >
+-      {
+-        using type = typename boost::mpl::vector<P1, P2, P3>;
+-      };
+-
+-      template<typename P1, typename P2, typename P3, typename P4>
+-      struct BilistToSeq<boost::_bi::list4<P1, P2, P3, P4> >
+-      {
+-        using type = typename boost::mpl::vector<P1, P2, P3, P4>;
+-      };
+-
+-      template<typename P1, typename P2, typename P3, typename P4, typename P5>
+-      struct BilistToSeq<boost::_bi::list5<P1, P2, P3, P4, P5> >
+-      {
+-        using type = typename boost::mpl::vector<P1, P2, P3, P4, P5>;
++      // Matches both the legacy `boost::_bi::listN<P1, ..., PN>` types and the
++      // variadic `boost::_bi::list<P...>` type used by recent Boost.Bind.
++      // (`boost::_bi::list0` is not a template and falls back to the primary
++      // template above.)
++      template<template<typename...> class List, typename... P>
++      struct BilistToSeq<List<P...> >
++      {
++        using type = typename boost::mpl::vector<P...>;
+       };
+ 
+       template<typename F, typename BL>
+diff --git a/src/application.cpp b/src/application.cpp
+index f41d795..8759a17 100644
+--- a/src/application.cpp
++++ b/src/application.cpp
+@@ -74,7 +74,7 @@ namespace qi {
+   static FunctionList* globalAtRun = nullptr;
+   static FunctionList* globalAtStop = nullptr;
+ 
+-  static boost::optional<boost::asio::io_service> globalIoService;
++  static boost::optional<boost::asio::io_context> globalIoService;
+ 
+   static void readPathConf()
+   {
+diff --git a/src/application_p.hpp b/src/application_p.hpp
+index bf4b793..665d4f1 100644
+--- a/src/application_p.hpp
++++ b/src/application_p.hpp
+@@ -3,7 +3,19 @@
+ # include <qi/api.hpp>
+ # include <qi/path.hpp>
+ #include <boost/filesystem.hpp>
+-#include <boost/process/search_path.hpp>
++#include <boost/version.hpp>
++// libqi uses the Boost.Process v1 API (`boost::process::search_path`,
++// `boost::this_process::path`). Since Boost 1.86, v2 is the default and v1
++// lives in `boost/process/v1/`, exposed as `boost::process` only when
++// BOOST_PROCESS_VERSION is 1.
++#ifndef BOOST_PROCESS_VERSION
++# define BOOST_PROCESS_VERSION 1
++#endif
++#if BOOST_VERSION >= 108600
++# include <boost/process/v1/search_path.hpp>
++#else
++# include <boost/process/search_path.hpp>
++#endif
+ 
+ namespace qi
+ {
+diff --git a/src/eventloop.cpp b/src/eventloop.cpp
+index 72173a8..c9fdce9 100644
+--- a/src/eventloop.cpp
++++ b/src/eventloop.cpp
+@@ -6,7 +6,9 @@
+ #include <system_error>
+ #include <memory>
+ 
+-#include <boost/asio/io_service.hpp>
++#include <boost/asio/io_context.hpp>
++#include <boost/asio/executor_work_guard.hpp>
++#include <boost/asio/post.hpp>
+ #include <boost/program_options.hpp>
+ #include <boost/make_shared.hpp>
+ #include <boost/asio/steady_timer.hpp>
+@@ -310,8 +312,8 @@ namespace qi {
+         std::max(static_cast<int>(std::thread::hardware_concurrency()), 3));
+     }
+ 
+-    _io.reset();
+-    delete _work.exchange(new boost::asio::io_service::work(_io));
++    _io.restart();
++    delete _work.exchange(new WorkGuard(_io.get_executor()));
+ 
+     auto min = _minThreads.load();
+     auto max = _maxThreads.load();
+@@ -676,8 +678,8 @@ namespace qi {
+       tracepoint(qi_qi, eventloop_post, id, cb.target_type().name());
+ 
+       auto countTotalTask = ka::shared_ptr(ka::scoped_incr_and_decr(_totalTask));
+-      _io.post([=] { invoke_maybe(cb, id, Promise<void>{}, erc, countTotalTask,
+-                                  UpdateLastWorkDate{true}); });
++      boost::asio::post(_io, [=] { invoke_maybe(cb, id, Promise<void>{}, erc, countTotalTask,
++                                                UpdateLastWorkDate{true}); });
+     }
+     else
+     {
+@@ -725,16 +727,20 @@ namespace qi {
+     tracepoint(qi_qi, eventloop_delay, id, cb.target_type().name(), boost::chrono::duration_cast<qi::MicroSeconds>(delay).count());
+     if (delay > Duration::zero())
+     {
+-      boost::shared_ptr<boost::asio::steady_timer> timer = boost::make_shared<boost::asio::steady_timer>(_io);
+-      timer->expires_from_now(boost::chrono::duration_cast<boost::asio::steady_timer::duration>(delay));
+-      auto prom = detail::makeCancelingPromise(options, boost::bind(&boost::asio::steady_timer::cancel, timer));
++      // Use the boost::chrono based `SteadyTimer` (see `asyncCallInternal` for
++      // time points below) rather than `boost::asio::steady_timer`: recent
++      // Boost.Asio always uses std::chrono for the latter, which is not
++      // convertible from `qi::Duration`.
++      boost::shared_ptr<SteadyTimer> timer = boost::make_shared<SteadyTimer>(_io);
++      timer->expires_after(boost::chrono::duration_cast<SteadyTimer::duration>(delay));
++      auto prom = detail::makeCancelingPromise(options, boost::bind(&SteadyTimer::cancel, timer));
+       timer->async_wait([=](const boost::system::error_code& erc) {
+         invoke_maybe(cb, id, prom, erc, countTotalTask, update);
+       });
+       return prom.future();
+     }
+     Promise<void> prom;
+-    _io.post([=] { invoke_maybe(cb, id, prom, erc, countTotalTask, update); });
++    boost::asio::post(_io, [=] { invoke_maybe(cb, id, prom, erc, countTotalTask, update); });
+     return prom.future();
+   }
+ 
+diff --git a/src/eventloop_p.hpp b/src/eventloop_p.hpp
+index 89b85d7..f10b2de 100644
+--- a/src/eventloop_p.hpp
++++ b/src/eventloop_p.hpp
+@@ -108,8 +108,9 @@ namespace qi {
+       qi::SteadyClockTimePoint timepoint, boost::function<void ()> callback,
+       ExecutionOptions options, UpdateLastWorkDate);
+ 
+-    boost::asio::io_service _io;
+-    std::atomic<boost::asio::io_service::work*> _work; // keep io.run() alive
++    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
++    boost::asio::io_context _io;
++    std::atomic<WorkGuard*> _work; // keep io.run() alive
+     std::atomic<int> _minThreads;
+     std::atomic<int> _maxThreads;
+ 
+diff --git a/src/messaging/messagesocket.hpp b/src/messaging/messagesocket.hpp
+index dff3aad..bff7f28 100644
+--- a/src/messaging/messagesocket.hpp
++++ b/src/messaging/messagesocket.hpp
+@@ -2,7 +2,7 @@
+ #ifndef _SRC_MESSAGESOCKET_HPP_
+ #define _SRC_MESSAGESOCKET_HPP_
+ 
+-# include <boost/asio/io_service.hpp>
++# include <boost/asio/io_context.hpp>
+ # include <boost/noncopyable.hpp>
+ # include <boost/variant.hpp>
+ # include <boost/optional.hpp>
+@@ -30,9 +30,9 @@ QI_TYPE_CONCRETE(boost::variant<std::string QI_COMMA qi::Message>);
+ 
+ namespace qi
+ {
+-  inline boost::asio::io_service* asIoServicePtr(EventLoop* e)
++  inline boost::asio::io_context* asIoServicePtr(EventLoop* e)
+   {
+-    return static_cast<boost::asio::io_service*>(e->nativeHandle());
++    return static_cast<boost::asio::io_context*>(e->nativeHandle());
+   }
+ 
+   class Session;
+diff --git a/src/messaging/sock/accept.hpp b/src/messaging/sock/accept.hpp
+index ddb270a..4899ffb 100644
+--- a/src/messaging/sock/accept.hpp
++++ b/src/messaging/sock/accept.hpp
+@@ -113,7 +113,7 @@ namespace qi { namespace sock {
+     acceptor.set_option(AcceptOptionReuseAddress<N>{*reuse});
+     acceptor.bind(endpoint);
+     ErrorCode<N> erc;
+-    acceptor.listen(Lowest<SslSocket<N>>::max_connections, erc);
++    acceptor.listen(Lowest<SslSocket<N>>::max_listen_connections, erc);
+     ErrorCode<N> localEpErc;
+     const auto localEp = acceptor.local_endpoint(localEpErc);
+     onListen(erc, localEpErc ? boost::none : boost::make_optional(localEp));
+diff --git a/src/messaging/sock/common.hpp b/src/messaging/sock/common.hpp
+index 5803ed6..67aaf95 100644
+--- a/src/messaging/sock/common.hpp
++++ b/src/messaging/sock/common.hpp
+@@ -2,6 +2,8 @@
+ #ifndef _QI_SOCK_COMMON_HPP
+ #define _QI_SOCK_COMMON_HPP
+ #include <mutex>
++#include <tuple>
++#include <boost/asio/dispatch.hpp>
+ #include <boost/shared_ptr.hpp>
+ #include <boost/optional.hpp>
+ #include <ka/functional.hpp>
+@@ -33,6 +35,35 @@ namespace qi { namespace sock {
+       ep.port()};
+   }
+ 
++  /// A procedure that dispatches each call of the underlying procedure on an
++  /// io service, so that it is executed by a thread running this io service
++  /// (immediately if the calling thread is one of them).
++  ///
++  /// This is the equivalent of what `io_service::wrap` used to return, which
++  /// was deprecated and then removed from Boost.Asio.
++  ///
++  /// Network N, Procedure<void (Args...)> Proc
++  template<typename N, typename Proc>
++  struct Dispatched
++  {
++    IoService<N>* _io;
++    Proc _proc;
++  // Regular:
++    KA_GENERATE_FRIEND_REGULAR_OPS_2(Dispatched, _io, _proc)
++  // Procedure<void (Args...)>:
++    template<typename... Args>
++    void operator()(Args&&... args) const
++    {
++      // The procedure and its arguments are copied, as the call may be
++      // deferred if the calling thread is not running the io service.
++      auto proc = _proc;
++      auto argsTuple = std::make_tuple(std::forward<Args>(args)...);
++      boost::asio::dispatch(*_io, [proc, argsTuple]() mutable {
++        ka::apply(proc, argsTuple);
++      });
++    }
++  };
++
+   /// A polymorphic transformation that takes a procedure and returns a
+   /// "stranded" equivalent.
+   ///
+@@ -46,9 +77,9 @@ namespace qi { namespace sock {
+   // PolymorphicTransformation:
+     /// Procedure<void (Args...)> Proc
+     template<typename Proc>
+-    auto operator()(Proc&& p) -> decltype(_io->wrap(std::forward<Proc>(p)))
++    Dispatched<N, ka::Decay<Proc>> operator()(Proc&& p) const
+     {
+-      return _io->wrap(std::forward<Proc>(p));
++      return {_io, std::forward<Proc>(p)};
+     }
+   };
+ 
+diff --git a/src/messaging/sock/disconnectingstate.hpp b/src/messaging/sock/disconnectingstate.hpp
+index 9fbddd5..bbf9eb5 100644
+--- a/src/messaging/sock/disconnectingstate.hpp
++++ b/src/messaging/sock/disconnectingstate.hpp
+@@ -44,7 +44,7 @@ namespace qi
+           // lifetime issues).
+           auto completePromise = _completePromise;
+           auto socket = _socket;
+-          GET_IO_SERVICE(*socket).wrap([=]() mutable {
++          StrandTransfo<N>{&GET_IO_SERVICE(*socket)}([=]() mutable {
+             QI_LOG_DEBUG_SOCKET(socket.get()) << "Disconnecting: before socket close";
+             close<N>(socket);
+             completePromise.setValue(nullptr);
+diff --git a/src/messaging/sock/networkasio.hpp b/src/messaging/sock/networkasio.hpp
+index f61e6ce..56fcbcc 100644
+--- a/src/messaging/sock/networkasio.hpp
++++ b/src/messaging/sock/networkasio.hpp
+@@ -19,13 +19,39 @@ namespace qi { namespace sock {
+   struct NetworkAsio
+   {
+     using acceptor_type = boost::asio::ip::tcp::acceptor;
+-    using resolver_type = boost::asio::ip::tcp::resolver;
++
++    /// Resolver for `boost::asio`.
++    ///
++    /// Boost.Asio (>= 1.87) removed the `query` and `iterator` nested types of
++    /// `boost::asio::ip::basic_resolver`, as well as the
++    /// `async_resolve(query, handler)` overload, which the `sock` code relies
++    /// on (see `traits.hpp` and `resolve.hpp`). This type restores them on top
++    /// of the current API (available since Boost 1.66).
++    struct Resolver : boost::asio::ip::tcp::resolver
++    {
++      using Base = boost::asio::ip::tcp::resolver;
++      using Base::Base;
++      using query = boost::asio::ip::basic_resolver_query<protocol_type>;
++      using iterator = boost::asio::ip::basic_resolver_iterator<protocol_type>;
++
++      /// Procedure<void (error_code_type, iterator)> Handler
++      template<typename Handler>
++      void async_resolve(const query& q, Handler handler)
++      {
++        Base::async_resolve(q.host_name(), q.service_name(),
++          static_cast<flags>(q.hints().ai_flags),
++          [handler](const boost::system::error_code& erc, const results_type& results) mutable {
++            handler(erc, results.begin());
++          });
++      }
++    };
++    using resolver_type = Resolver;
+     using ssl_context_type = boost::asio::ssl::context;
+     using ssl_socket_type = boost::asio::ssl::stream<boost::asio::ip::tcp::socket>;
+     using socket_option_no_delay_type = boost::asio::ip::tcp::no_delay;
+     using accept_option_reuse_address_type = boost::asio::ip::tcp::acceptor::reuse_address;
+     using error_code_type = boost::system::error_code;
+-    using io_service_type = boost::asio::io_service;
++    using io_service_type = boost::asio::io_context;
+     using io_context_type = boost::asio::io_context;
+     using const_buffer_type = boost::asio::const_buffer;
+     using executor_type = io_service_type::executor_type;
+diff --git a/src/messaging/transportserverasio_p.cpp b/src/messaging/transportserverasio_p.cpp
+index c6fb662..e347ab7 100644
+--- a/src/messaging/transportserverasio_p.cpp
++++ b/src/messaging/transportserverasio_p.cpp
+@@ -46,7 +46,7 @@ namespace qi
+ 
+     if (context)
+     {
+-      _acceptor = new boost::asio::ip::tcp::acceptor(*(boost::asio::io_service*)context->nativeHandle());
++      _acceptor = new boost::asio::ip::tcp::acceptor(*(boost::asio::io_context*)context->nativeHandle());
+       listen(_listenUrl);
+     }
+     else
+@@ -216,18 +216,19 @@ namespace qi
+ #ifndef ANDROID
+     // resolve endpoint
+     ip::tcp::resolver r(GET_IO_SERVICE(*_acceptor));
+-    ip::tcp::resolver::query q(_listenUrl.host(), boost::lexical_cast<std::string>(_listenUrl.port()),
+-                               boost::asio::ip::tcp::resolver::query::all_matching);
+-    ip::tcp::resolver::iterator it = r.resolve(q);
++    const auto results = r.resolve(_listenUrl.host(), boost::lexical_cast<std::string>(_listenUrl.port()),
++                                   ip::tcp::resolver::all_matching);
++    auto it = results.begin();
++    const auto itEnd = results.end();
+ 
+     static bool disableIPV6 = qi::os::getenv("QIMESSAGING_ENABLE_IPV6").empty();
+     if (disableIPV6)
+     {
+-      while (it != boost::asio::ip::tcp::resolver::iterator() &&
++      while (it != itEnd &&
+              it->endpoint().address().is_v6())
+         ++it;
+     }
+-    if (it == ip::tcp::resolver::iterator())
++    if (it == itEnd)
+     {
+       const char* s = "Listen error: no valid endpoint.";
+       qiLogError() << s;
+@@ -237,7 +238,7 @@ namespace qi
+ 
+     ip::tcp::endpoint ep = *it;
+ #else
+-    ip::tcp::endpoint ep(boost::asio::ip::address::from_string(url.host()), url.port());
++    ip::tcp::endpoint ep(boost::asio::ip::make_address(url.host()), url.port());
+ #endif // #ifndef ANDROID
+ 
+     qiLogDebug() << "Will listen on " << ep;
+@@ -261,7 +262,7 @@ namespace qi
+     }
+ 
+     boost::system::error_code ec;
+-    _acceptor->listen(socket_base::max_connections, ec);
++    _acceptor->listen(socket_base::max_listen_connections, ec);
+     if (ec)
+     {
+       qiLogError("qimessaging.server.listen") << ec.message();
+diff --git a/src/messaging/uri.cpp b/src/messaging/uri.cpp
+index 54c0e48..30e0443 100644
+--- a/src/messaging/uri.cpp
++++ b/src/messaging/uri.cpp
+@@ -15,7 +15,7 @@ bool isLoopbackAddress(const std::string& host)
+   if (host == "localhost")
+     return true;
+   boost::system::error_code ec;
+-  const auto addr = boost::asio::ip::address::from_string(host, ec);
++  const auto addr = boost::asio::ip::make_address(host, ec);
+   return !ec && addr.is_loopback();
+ }
+ 
+diff --git a/src/ptruid.cpp b/src/ptruid.cpp
+index a6683b4..cee080b 100644
+--- a/src/ptruid.cpp
++++ b/src/ptruid.cpp
+@@ -7,6 +7,7 @@
+ #include <atomic>
+ #include <iterator>
+ #include <iostream>
++#include <type_traits>
+ #include <boost/algorithm/hex.hpp>
+ #include <boost/range/algorithm/copy.hpp>
+ #include <boost/core/ignore_unused.hpp>
+@@ -16,17 +17,15 @@
+ 
+ namespace qi
+ {
+-  template<size_t N>
+-  static void staticAssertUuidIsByteArray(uint8_t (Uuid::*)[N])
+-  {
+-    static_assert(sizeof(Uuid) == N, "Uuid must be a byte array.");
+-  }
+-
+   PtrUid::PtrUid(const Uuid& machineUuid, const Uuid& processUuid, const void* ptr)
+   {
+     static_assert(sizeof(uint8_t) == 1, "uint8_t must have a size of 1 "
+                                         "for the array size computation to be valid.");
+-    staticAssertUuidIsByteArray(&Uuid::data);
++    // Since Boost 1.86, `Uuid::data` is no longer a plain `uint8_t[16]` member
++    // but a wrapper type, so check the "byte array" contract through the
++    // public API instead of the member's type.
++    static_assert(std::is_same<Uuid::value_type, uint8_t>::value, "Uuid must be a byte array.");
++    static_assert(sizeof(Uuid) == Uuid::static_size(), "Uuid must be a byte array.");
+     std::array<uint8_t,
+         sizeof(Uuid) // machine uuid
+       + sizeof(Uuid) // process uuid
+diff --git a/src/sdklayout-boost.cpp b/src/sdklayout-boost.cpp
+index 5acc751..1ab8d3d 100644
+--- a/src/sdklayout-boost.cpp
++++ b/src/sdklayout-boost.cpp
+@@ -579,7 +579,7 @@ namespace detail {
+       {
+         boost::system::error_code ec;
+         boost::filesystem::recursive_directory_iterator itD(dataPath,
+-            boost::filesystem::symlink_option::none, ec);
++            boost::filesystem::directory_options::none, ec);
+         if (ec)
+         {
+           if (ec == boost::system::errc::no_such_file_or_directory)
+diff --git a/src/tailfileloghandler.cpp b/src/tailfileloghandler.cpp
+index d4508bb..4d1b163 100644
+--- a/src/tailfileloghandler.cpp
++++ b/src/tailfileloghandler.cpp
+@@ -98,7 +98,7 @@ namespace log
+       boost::filesystem::path filePath(_p->_fileName);
+       boost::filesystem::path oldFilePath(_p->_fileName + ".old");
+ 
+-      boost::filesystem::copy_file(filePath, oldFilePath, boost::filesystem::copy_option::overwrite_if_exists);
++      boost::filesystem::copy_file(filePath, oldFilePath, boost::filesystem::copy_options::overwrite_existing);
+ 
+       FILE* pfile = qi::os::fopen(filePath.make_preferred().string().c_str(), "w+");
+ 

@@ -1,0 +1,159 @@
+name: Release
+
+# A release is a tag `vX.Y.Z` matching the workspace version. The workflow checks the
+# version, runs the tests, builds the binaries (qi-cli, naoqi-sim) for every supported
+# target, publishes a GitHub release with them and the changelog section, then publishes
+# the crates that are not on crates.io yet (needs the CARGO_REGISTRY_TOKEN secret).
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Check the version and run the tests
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compare the tag with the workspace version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "libqi-vibe") | .version')
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag does not match the workspace version $version" >&2
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: cargo test --workspace --release --all-features
+      - run: cargo publish --workspace --dry-run
+
+  binaries:
+    name: Build ${{ matrix.target }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p libqi-vibe --features cli,naoqi-sim --bin qi-cli --bin naoqi-sim
+      - name: Archive
+        shell: bash
+        run: |
+          set -eu
+          version="${{ needs.check.outputs.version }}"
+          name="libqi-rs-vibe-$version-${{ matrix.target }}"
+          mkdir "$name"
+          for bin in qi-cli naoqi-sim; do
+            if [ -f "target/${{ matrix.target }}/release/$bin.exe" ]; then
+              cp "target/${{ matrix.target }}/release/$bin.exe" "$name/"
+            else
+              cp "target/${{ matrix.target }}/release/$bin" "$name/"
+            fi
+          done
+          cp LICENSE.txt README.md "$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+            echo "asset=$name.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$name.tar.gz" "$name"
+            echo "asset=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.asset }}
+          if-no-files-found: error
+
+  github-release:
+    name: Publish the GitHub release
+    needs: [check, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Extract the changelog section
+        run: |
+          version="${{ needs.check.outputs.version }}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; found = ($0 ~ "^## \\[" v "\\]") ; next }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          echo "## Install" >> notes.md
+          echo "" >> notes.md
+          echo '```sh' >> notes.md
+          echo "cargo install libqi-vibe@$version --features cli --bin qi-cli" >> notes.md
+          echo "cargo install libqi-vibe@$version --features naoqi-sim --bin naoqi-sim" >> notes.md
+          echo '```' >> notes.md
+          echo "" >> notes.md
+          echo "Prebuilt \`qi-cli\` and \`naoqi-sim\` binaries are attached below." >> notes.md
+          cd assets && sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: libqi-rs-vibe ${{ needs.check.outputs.version }}
+          body_path: notes.md
+          prerelease: ${{ contains(needs.check.outputs.version, '-') }}
+          files: assets/*
+          fail_on_unmatched_files: true
+
+  crates-io:
+    name: Publish to crates.io
+    needs: [check, github-release]
+    runs-on: ubuntu-latest
+    environment: crates.io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish the crates missing from crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -eu
+          version="${{ needs.check.outputs.version }}"
+          missing=()
+          # Dependency order; `cargo publish --workspace` would also sort them, but it
+          # refuses when some crates of the workspace are already published.
+          for crate in libqi-macros-vibe libqi-vibe; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -A "libqi-rs-vibe release workflow" \
+              "https://crates.io/api/v1/crates/$crate/$version")
+            if [ "$status" = "200" ]; then
+              echo "$crate $version is already on crates.io"
+            else
+              missing+=("$crate")
+            fi
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "nothing to publish"
+            exit 0
+          fi
+          args=()
+          for crate in "${missing[@]}"; do args+=(-p "$crate"); done
+          cargo publish --locked "${args[@]}"

@@ -1,0 +1,752 @@
+use assert_matches::assert_matches;
+use bytes::Bytes;
+use futures::{
+    channel::mpsc,
+    future::{err, ok},
+    stream, FutureExt, StreamExt,
+};
+use qi::format::{from_slice, to_bytes};
+use qi::messaging::{
+    endpoint,
+    handler::{self, CallError},
+    message::{self, Address, Id},
+    value::{object, service},
+    CallHandler, CancellationToken, CapabilitiesHandler, Error, EventHandler, Message, PostHandler,
+};
+use qi::value::{KeyDynValueMap, Value};
+use std::{
+    convert::Infallible,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
+use tokio_test::{assert_pending, assert_ready, assert_ready_err, assert_ready_ok, task};
+
+#[test]
+
+fn client_call() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+
+    let (client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    let mut call = task::spawn(client.call(
+        Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        to_bytes(&HandlerValue::Ok("My name is Alice")).unwrap(),
+        message::Flags::NONE,
+    ));
+    assert_pending!(call.poll());
+
+    assert!(outgoing.is_woken());
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("call message is missing")
+        .expect("call message is in error");
+    assert_matches!(
+        message,
+        Message::Call {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload,
+            ..
+        } => {
+            let value = from_slice::<HandlerValue>(&payload).unwrap();
+            assert_eq!(value, Ok("My name is Alice"));
+        }
+    );
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Reply {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload: to_bytes(&HandlerValue::Ok("Hello Alice (from server)")).unwrap(),
+            flags: Default::default(),
+        }))
+        .expect("could not send call reply");
+    assert_pending!(outgoing.poll_next());
+
+    assert!(call.is_woken());
+    let reply = assert_ready_ok!(call.poll());
+    let reply = from_slice::<HandlerValue>(&reply.payload).unwrap();
+    assert_eq!(reply, Ok("Hello Alice (from server)"));
+}
+
+#[test]
+fn client_call_error() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    let mut call = task::spawn(client.call(
+        Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        Bytes::from_static(b"My name is Alice"),
+        message::Flags::NONE,
+    ));
+    assert_pending!(call.poll());
+
+    assert!(outgoing.is_woken());
+    assert_ready!(outgoing.poll_next())
+        .expect("call message is missing")
+        .expect("call message is in error");
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Error {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            error: "I don't know anyone named Alice".to_owned(),
+        }))
+        .expect("could not send call error");
+    assert_pending!(outgoing.poll_next());
+
+    assert!(call.is_woken());
+    let err = assert_ready_err!(call.poll());
+    assert_matches!(err, Error::CallError(err) => {
+        assert_eq!(err, "I don't know anyone named Alice");
+    });
+}
+
+#[test]
+fn client_call_canceled() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    let mut call = task::spawn(client.call(
+        Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        Bytes::from_static(b"My name is Alice"),
+        message::Flags::NONE,
+    ));
+    assert_pending!(call.poll());
+
+    assert!(outgoing.is_woken());
+    assert_ready!(outgoing.poll_next())
+        .expect("call message is missing")
+        .expect("call message is in error");
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Canceled {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        }))
+        .expect("could not send call canceled");
+    assert_pending!(outgoing.poll_next());
+
+    assert!(call.is_woken());
+    let err = assert_ready_err!(call.poll());
+    assert_matches!(err, Error::CallCanceled);
+}
+
+#[test]
+fn client_post() {
+    let (handler, _) = SimpleHandler::new();
+    let (client, outgoing) =
+        endpoint::dispatch(stream::pending::<Result<_, Infallible>>(), handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    let mut send = task::spawn(client.post(
+        Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        Bytes::from_static(b"Say hi to Bob for me"),
+        message::Flags::NONE,
+    ));
+    assert_ready_ok!(send.poll());
+
+    assert!(outgoing.is_woken());
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("post message is missing")
+        .expect("post message is in error");
+    assert_matches!(
+        message,
+        Message::Post {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload,
+            ..
+        } => {
+            assert_eq!(payload, b"Say hi to Bob for me".as_slice());
+        }
+    )
+}
+
+#[test]
+fn client_event() {
+    let (handler, _) = SimpleHandler::new();
+    let (client, outgoing) =
+        endpoint::dispatch(stream::pending::<Result<_, Infallible>>(), handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    let mut send = task::spawn(client.send_event(
+        Address(service::Id(1), object::Id(2), object::ActionId(3)),
+        Bytes::from_static(b"Carol says hi by the way"),
+        message::Flags::NONE,
+    ));
+    assert_ready_ok!(send.poll());
+
+    assert!(outgoing.is_woken());
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("event message is missing")
+        .expect("event message is in error");
+    assert_matches!(
+        message,
+        Message::Event {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload,
+            ..
+        } => {
+            assert_eq!(payload, b"Carol says hi by the way".as_slice());
+        }
+    )
+}
+
+#[test]
+fn client_drop_closes_endpoint() {
+    let (handler, _) = SimpleHandler::new();
+    let (client, outgoing) =
+        endpoint::dispatch(stream::pending::<Result<_, Infallible>>(), handler);
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+    drop(client);
+    assert_matches!(assert_ready!(outgoing.poll_next()), None);
+}
+
+#[test]
+fn handler_call() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Call {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            payload: to_bytes(&HandlerValue::Ok("My name is Alice")).unwrap(),
+            flags: Default::default(),
+        }))
+        .expect("failed to send call message");
+
+    assert!(outgoing.is_woken());
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("missing reply message")
+        .expect("reply message is in error");
+    assert_matches!(
+        message,
+        Message::Reply {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            payload,
+            ..
+        } => {
+            let value = from_slice::<&str>(&payload).unwrap();
+            assert_eq!(value, "My name is Alice");
+        }
+    );
+}
+
+#[test]
+fn handler_call_error() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Call {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            payload: to_bytes(&Err::<&str, _>(HandlerError {
+                message: "bad request".to_owned(),
+                is_canceled: false,
+                is_fatal: false,
+            }))
+            .unwrap(),
+            flags: Default::default(),
+        }))
+        .expect("failed to send call message");
+
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("missing message error")
+        .expect("error message is not ok");
+    assert_matches!(
+        message,
+        Message::Error {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            error
+        } => {
+            assert_eq!(error.to_string(), "bad request");
+        }
+    );
+}
+
+#[test]
+fn handler_call_error_fatal() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Call {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            payload: to_bytes(&Err::<&str, _>(HandlerError {
+                message: "fatal request".to_owned(),
+                is_canceled: false,
+                is_fatal: true,
+            }))
+            .unwrap(),
+            flags: Default::default(),
+        }))
+        .expect("failed to send call message");
+
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("missing message error")
+        .expect("error message is not ok");
+    // Dispatch still sends the error back to the caller before stopping.
+    assert_matches!(
+        message,
+        Message::Error {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            error
+        } => {
+            assert_eq!(error.to_string(), "fatal request");
+        }
+    );
+
+    // Error is fatal, dispatch is ended.
+    assert_matches!(assert_ready!(outgoing.poll_next()), None);
+}
+
+#[test]
+fn handler_call_canceled() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Call {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+            payload: to_bytes(&HandlerValue::Err(HandlerError {
+                message: "canceled".to_owned(),
+                is_canceled: true,
+                is_fatal: false,
+            }))
+            .unwrap(),
+            flags: Default::default(),
+        }))
+        .expect("failed to send call message");
+
+    let message = assert_ready!(outgoing.poll_next())
+        .expect("missing message canceled")
+        .expect("canceled message is not ok");
+    // Dispatch still sends the error back to the caller before stopping.
+    assert_matches!(
+        message,
+        Message::Canceled {
+            id: Id(1),
+            address: Address(service::Id(3), object::Id(2), object::ActionId(1)),
+        }
+    );
+}
+
+/// Tests that a call to the handler is correctly canceled when a cancel message is received:
+/// the cancellation token of the call is triggered and the handler result, a canceled error, is
+/// sent back as a canceled message.
+#[test]
+fn handler_call_cancel() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let handler = CountedPendingHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, &handler);
+    let mut outgoing = task::spawn(outgoing);
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Call {
+            id: Id(1),
+            address: Address::default(),
+            payload: Bytes::new(),
+            flags: Default::default(),
+        }))
+        .expect("failed to send call message");
+
+    // The handler call never terminates, so there is no outgoing message yet.
+    assert_pending!(outgoing.poll_next());
+    assert_eq!(handler.running_calls(), 1);
+
+    // Send the cancel, then poll. The call is canceled: there is no
+    // more running calls and one canceled message is produced.
+    incoming_messages_sender
+        .try_send(Ok(Message::Cancel {
+            id: Id(2),
+            address: Address::default(),
+            call_id: Id(1),
+        }))
+        .expect("failed to send cancel message");
+
+    assert!(outgoing.is_woken());
+    let message = assert_ready!(outgoing.poll_next());
+    assert_matches!(
+        message,
+        Some(Ok(Message::Canceled {
+            id: Id(1),
+            address
+        })) if address == Address::default()
+    );
+    assert_eq!(handler.running_calls(), 0);
+}
+
+/// Tests that the handler may be called multiple times without waiting for previous calls to finish.
+/// This means that calls of the handler can be concurrent.
+#[test]
+fn handler_concurrent_calls() {
+    // N number of handler concurrent calls.
+    const HANDLER_CONCURRENT_CALLS: usize = 5;
+
+    // Send N call messages to the endpoint.
+    let messages = stream::repeat(Ok::<_, Infallible>(Message::Call {
+        id: Id::default(),
+        address: Address::default(),
+        payload: Bytes::new(),
+        flags: Default::default(),
+    }))
+    .take(HANDLER_CONCURRENT_CALLS)
+    .chain(stream::pending());
+
+    let handler = CountedPendingHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(messages, &handler);
+    let mut messages = task::spawn(outgoing);
+
+    // Process incoming messages.
+    assert_pending!(messages.poll_next());
+
+    // Check that we have the number of expected running calls.
+    assert_eq!(handler.running_calls(), HANDLER_CONCURRENT_CALLS);
+}
+
+#[test]
+fn handler_post() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, SimpleHandlerReceivers { posts, .. }) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+    let mut posts = task::spawn(posts);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Post {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload: Bytes::from_static(b"Bob says hi back"),
+            flags: Default::default(),
+        }))
+        .expect("could not send post message");
+
+    assert!(outgoing.is_woken());
+    assert_pending!(outgoing.poll_next());
+    let post = assert_ready!(posts.poll_next());
+    assert_matches!(
+        post,
+        Some((Address(service::Id(1), object::Id(2), object::ActionId(3)), args)) => {
+            assert_eq!(args, Bytes::from_static(b"Bob says hi back"));
+        }
+    );
+}
+
+#[test]
+fn handler_event() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, SimpleHandlerReceivers { events, .. }) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+    let mut events = task::spawn(events);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Event {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            payload: Bytes::from_static(b"Carol received your 'hi'"),
+            flags: Default::default(),
+        }))
+        .expect("could not send event message");
+
+    assert!(outgoing.is_woken());
+    assert_pending!(outgoing.poll_next());
+    let event = assert_ready!(events.poll_next());
+    assert_matches!(
+        event,
+        Some((
+            Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            args,
+        )) => {
+            assert_eq!(args, b"Carol received your 'hi'".as_slice());
+        }
+    );
+}
+
+#[test]
+fn handler_capabilities() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, Infallible>>(1);
+
+    let (handler, SimpleHandlerReceivers { capabilities, .. }) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+    let mut capabilities = task::spawn(capabilities);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    incoming_messages_sender
+        .try_send(Ok(Message::Capabilities {
+            id: Id(1),
+            address: Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            capabilities: KeyDynValueMap::from_iter([("SayHi".to_owned(), Value::Bool(false))]),
+        }))
+        .expect("could not send capabilties message");
+
+    assert!(outgoing.is_woken());
+    assert_pending!(outgoing.poll_next());
+    let capabilities = assert_ready!(capabilities.poll_next());
+    assert_eq!(
+        capabilities,
+        Some((
+            Address(service::Id(1), object::Id(2), object::ActionId(3)),
+            KeyDynValueMap::from_iter([("SayHi".to_owned(), Value::Bool(false),)])
+        ))
+    );
+}
+
+#[test]
+fn incoming_messages_error() {
+    let (mut incoming_messages_sender, incoming_messages_receiver) =
+        mpsc::channel::<Result<_, StreamError>>(1);
+
+    let (handler, _) = SimpleHandler::new();
+    let (_client, outgoing) = endpoint::dispatch(incoming_messages_receiver, handler);
+
+    let mut outgoing = task::spawn(outgoing);
+    assert_pending!(outgoing.poll_next());
+
+    incoming_messages_sender
+        .try_send(Err(StreamError("This is a incoming error")))
+        .expect("could not send capabilties message");
+
+    let StreamError(err) = assert_ready!(outgoing.poll_next())
+        .expect("missing error")
+        .unwrap_err();
+    assert_eq!(err, "This is a incoming error");
+}
+
+#[derive(
+    Debug, thiserror::Error, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[error("{message}")]
+struct HandlerError {
+    message: String,
+    is_canceled: bool,
+    is_fatal: bool,
+}
+
+impl CallError for HandlerError {
+    fn is_canceled(&self) -> bool {
+        self.is_canceled
+    }
+
+    fn is_fatal(&self) -> bool {
+        self.is_fatal
+    }
+}
+
+// A handler that returns futures that block until notified and tracks how many futures are created.
+struct CountedPendingHandler {
+    unblock: Arc<tokio::sync::Notify>,
+    pending_calls: Arc<AtomicUsize>,
+}
+
+impl CountedPendingHandler {
+    fn new() -> Self {
+        CountedPendingHandler {
+            unblock: Arc::new(tokio::sync::Notify::new()),
+            pending_calls: Arc::default(),
+        }
+    }
+
+    fn running_calls(&self) -> usize {
+        self.pending_calls.load(Ordering::SeqCst)
+    }
+}
+
+impl CallHandler for &'_ CountedPendingHandler {
+    type Error = HandlerError;
+
+    fn handle_call(
+        &mut self,
+        _call: handler::Call,
+        cancel: CancellationToken,
+    ) -> impl Future<Output = Result<handler::Reply, Self::Error>> + Send + 'static {
+        let drop_guard = DecreaseCountDropGuard::new(&self.pending_calls);
+        let unblock = Arc::clone(&self.unblock);
+        async move {
+            let result = tokio::select! {
+                () = unblock.notified() => Ok(handler::Reply::new(Bytes::new())),
+                () = cancel.cancelled() => Err(HandlerError {
+                    message: "canceled".to_owned(),
+                    is_canceled: true,
+                    is_fatal: false,
+                }),
+            };
+            drop(drop_guard);
+            result
+        }
+        .boxed()
+    }
+}
+
+impl EventHandler for &'_ CountedPendingHandler {
+    fn handle_event(&mut self, _event: handler::Event) {}
+}
+
+impl PostHandler for &'_ CountedPendingHandler {
+    fn handle_post(&mut self, _post: handler::Post) {}
+}
+
+impl CapabilitiesHandler for &'_ CountedPendingHandler {
+    fn handle_capabilities(&mut self, _address: message::Address, _data: KeyDynValueMap) {}
+}
+
+struct DecreaseCountDropGuard(Arc<AtomicUsize>);
+
+impl DecreaseCountDropGuard {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for DecreaseCountDropGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SimpleHandler {
+    events: mpsc::UnboundedSender<(message::Address, Bytes)>,
+    posts: mpsc::UnboundedSender<(message::Address, Bytes)>,
+    capabilities: mpsc::UnboundedSender<(message::Address, KeyDynValueMap)>,
+}
+
+impl SimpleHandler {
+    fn new() -> (Self, SimpleHandlerReceivers) {
+        let (events_sender, events_receiver) = mpsc::unbounded();
+        let (posts_sender, posts_receiver) = mpsc::unbounded();
+        let (capabilities_sender, capabilities_receiver) = mpsc::unbounded();
+        (
+            Self {
+                events: events_sender,
+                posts: posts_sender,
+                capabilities: capabilities_sender,
+            },
+            SimpleHandlerReceivers {
+                events: events_receiver,
+                posts: posts_receiver,
+                capabilities: capabilities_receiver,
+            },
+        )
+    }
+}
+
+impl CallHandler for SimpleHandler {
+    type Error = HandlerError;
+
+    fn handle_call(
+        &mut self,
+        call: handler::Call,
+        _cancel: CancellationToken,
+    ) -> impl Future<Output = Result<handler::Reply, Self::Error>> + Send + 'static {
+        let arg = from_slice::<HandlerValue>(&call.payload).unwrap();
+        match arg {
+            Ok(arg) => ok(handler::Reply::new(to_bytes(&arg).unwrap())),
+            Err(error) => err(error),
+        }
+    }
+}
+
+impl EventHandler for SimpleHandler {
+    fn handle_event(&mut self, event: handler::Event) {
+        self.events
+            .unbounded_send((event.address, event.payload))
+            .unwrap()
+    }
+}
+
+impl PostHandler for SimpleHandler {
+    fn handle_post(&mut self, post: handler::Post) {
+        self.posts
+            .unbounded_send((post.address, post.payload))
+            .unwrap()
+    }
+}
+
+impl CapabilitiesHandler for SimpleHandler {
+    fn handle_capabilities(&mut self, address: message::Address, map: KeyDynValueMap) {
+        self.capabilities.unbounded_send((address, map)).unwrap()
+    }
+}
+
+#[derive(Debug)]
+struct SimpleHandlerReceivers {
+    events: mpsc::UnboundedReceiver<(message::Address, Bytes)>,
+    posts: mpsc::UnboundedReceiver<(message::Address, Bytes)>,
+    capabilities: mpsc::UnboundedReceiver<(message::Address, KeyDynValueMap)>,
+}
+
+type HandlerValue<'a> = Result<&'a str, HandlerError>;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct StreamError(&'static str);

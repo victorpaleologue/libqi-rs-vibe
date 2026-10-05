@@ -1,0 +1,2851 @@
+From 26856a67b564d2824b19492361defeae0a412497 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Victor=20Pal=C3=A9ologue?= <victor.paleologue@semio.ai>
+Date: Mon, 5 Oct 2026 15:21:50 +0200
+Subject: [PATCH] feat(arora-hal-naoqi): NAO and Pepper as Arora devices over
+ libqi-rs-vibe
+
+A NAOqi HAL in pure Rust: it connects to a robot's NAOqi through the `qi`
+crate of libqi-rs-vibe (no C++ SDK, no cross-compilation) and exposes
+joints, battery, inertial unit, sonars and touch sensors as keys, and
+drives joint targets, stiffness, speech, LEDs and the base velocity
+through ALMotion, ALTextToSpeech and ALLeds. Tested against an
+in-process fake NAOqi built with the same crate, and with a probe
+example against naoqi-sim.
+
+libqi-rs-vibe is not on crates.io yet, so the dependency is pinned to a
+commit of its repository.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DMrzqz1MW6FDjHrkpvUA5s
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DMrzqz1MW6FDjHrkpvUA5s
+---
+ Cargo.lock                                    | 337 +++++++++-
+ Cargo.toml                                    |   2 +
+ crates/arora-hal-naoqi/CHANGELOG.md           |  19 +
+ crates/arora-hal-naoqi/Cargo.toml             |  41 ++
+ crates/arora-hal-naoqi/configs/nao.json       |   8 +
+ .../arora-hal-naoqi/examples/naoqi_probe.rs   |  56 ++
+ crates/arora-hal-naoqi/readme.md              |  35 +
+ crates/arora-hal-naoqi/src/bin/arora-naoqi.rs |  41 ++
+ crates/arora-hal-naoqi/src/config.rs          | 230 +++++++
+ .../arora-hal-naoqi/src/conversions/joints.rs | 119 ++++
+ .../arora-hal-naoqi/src/conversions/keys.rs   | 157 +++++
+ crates/arora-hal-naoqi/src/conversions/mod.rs |   9 +
+ .../arora-hal-naoqi/src/conversions/values.rs |  73 +++
+ crates/arora-hal-naoqi/src/lib.rs             |  38 ++
+ crates/arora-hal-naoqi/src/naoqi_error.rs     |  30 +
+ crates/arora-hal-naoqi/src/naoqi_hal.rs       | 607 ++++++++++++++++++
+ .../arora-hal-naoqi/tests/fake_naoqi/mod.rs   | 343 ++++++++++
+ crates/arora-hal-naoqi/tests/hal.rs           | 271 ++++++++
+ 18 files changed, 2399 insertions(+), 17 deletions(-)
+ create mode 100644 crates/arora-hal-naoqi/CHANGELOG.md
+ create mode 100644 crates/arora-hal-naoqi/Cargo.toml
+ create mode 100644 crates/arora-hal-naoqi/configs/nao.json
+ create mode 100644 crates/arora-hal-naoqi/examples/naoqi_probe.rs
+ create mode 100644 crates/arora-hal-naoqi/readme.md
+ create mode 100644 crates/arora-hal-naoqi/src/bin/arora-naoqi.rs
+ create mode 100644 crates/arora-hal-naoqi/src/config.rs
+ create mode 100644 crates/arora-hal-naoqi/src/conversions/joints.rs
+ create mode 100644 crates/arora-hal-naoqi/src/conversions/keys.rs
+ create mode 100644 crates/arora-hal-naoqi/src/conversions/mod.rs
+ create mode 100644 crates/arora-hal-naoqi/src/conversions/values.rs
+ create mode 100644 crates/arora-hal-naoqi/src/lib.rs
+ create mode 100644 crates/arora-hal-naoqi/src/naoqi_error.rs
+ create mode 100644 crates/arora-hal-naoqi/src/naoqi_hal.rs
+ create mode 100644 crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs
+ create mode 100644 crates/arora-hal-naoqi/tests/hal.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 53a7a640..3e77e660 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -69,6 +69,12 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "aliasable"
++version = "0.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
++
+ [[package]]
+ name = "allocator-api2"
+ version = "0.2.21"
+@@ -187,7 +193,7 @@ dependencies = [
+  "rustls 0.23.43",
+  "serde_json",
+  "serde_yaml 0.9.34+deprecated",
+- "sysinfo",
++ "sysinfo 0.33.1",
+  "test-rust-wasm",
+  "tokio",
+  "uuid",
+@@ -386,6 +392,24 @@ dependencies = [
+  "tokio",
+ ]
+ 
++[[package]]
++name = "arora-hal-naoqi"
++version = "0.1.0"
++dependencies = [
++ "anyhow",
++ "arora",
++ "arora-hal",
++ "arora-types",
++ "async-trait",
++ "futures",
++ "libqi-vibe",
++ "log",
++ "serde",
++ "serde_json",
++ "thiserror 2.0.19",
++ "tokio",
++]
++
+ [[package]]
+ name = "arora-hal-restful"
+ version = "3.0.0"
+@@ -1424,7 +1448,7 @@ dependencies = [
+  "miniz_oxide",
+  "object 0.37.3",
+  "rustc-demangle",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -1782,7 +1806,7 @@ dependencies = [
+  "num-traits",
+  "serde",
+  "wasm-bindgen",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -3658,7 +3682,7 @@ dependencies = [
+  "js-sys",
+  "log",
+  "wasm-bindgen",
+- "windows-core",
++ "windows-core 0.57.0",
+ ]
+ 
+ [[package]]
+@@ -3998,7 +4022,7 @@ dependencies = [
+  "simd_cesu8",
+  "thiserror 2.0.19",
+  "walkdir",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -4165,7 +4189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+ dependencies = [
+  "cfg-if 1.0.4",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -4175,7 +4199,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+ dependencies = [
+  "cfg-if 1.0.4",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -4184,6 +4208,54 @@ version = "0.2.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+ 
++[[package]]
++name = "libqi-macros-vibe"
++version = "0.1.0"
++source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=39a661bd048482a952fe31c85ac1ce697e414cc0#39a661bd048482a952fe31c85ac1ce697e414cc0"
++dependencies = [
++ "convert_case 0.10.0",
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
++[[package]]
++name = "libqi-vibe"
++version = "0.1.0"
++source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=39a661bd048482a952fe31c85ac1ce697e414cc0#39a661bd048482a952fe31c85ac1ce697e414cc0"
++dependencies = [
++ "async-stream",
++ "async-trait",
++ "bytes",
++ "derive_more 2.1.1",
++ "dirs",
++ "either",
++ "futures",
++ "libqi-macros-vibe",
++ "machine-uid",
++ "once_cell",
++ "ordered-float",
++ "ouroboros",
++ "pin-project-lite",
++ "rcgen 0.13.2",
++ "rustls 0.23.43",
++ "rustls-pki-types",
++ "sealed",
++ "seq-macro",
++ "serde",
++ "serde_with",
++ "sha1_smol",
++ "sysinfo 0.37.2",
++ "thiserror 2.0.19",
++ "tokio",
++ "tokio-rustls 0.26.4",
++ "tokio-stream",
++ "tokio-util",
++ "tracing",
++ "url",
++ "uuid",
++]
++
+ [[package]]
+ name = "libredox"
+ version = "0.1.18"
+@@ -4285,6 +4357,17 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "machine-uid"
++version = "0.5.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7d7217d573cdb141d6da43113b098172e057d39915d79c4bdedbc3aacd46bd96"
++dependencies = [
++ "libc",
++ "windows-registry",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "macro-string"
+ version = "0.2.0"
+@@ -4652,6 +4735,25 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "objc2-core-foundation"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
++dependencies = [
++ "bitflags 2.13.1",
++]
++
++[[package]]
++name = "objc2-io-kit"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
++dependencies = [
++ "libc",
++ "objc2-core-foundation",
++]
++
+ [[package]]
+ name = "object"
+ version = "0.37.3"
+@@ -4727,12 +4829,47 @@ version = "0.2.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+ 
++[[package]]
++name = "ordered-float"
++version = "5.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
++dependencies = [
++ "num-traits",
++ "rand 0.8.7",
++ "serde",
++]
++
+ [[package]]
+ name = "os_str_bytes"
+ version = "6.6.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
+ 
++[[package]]
++name = "ouroboros"
++version = "0.18.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1e0f050db9c44b97a94723127e6be766ac5c340c48f2c4bb3ffa11713744be59"
++dependencies = [
++ "aliasable",
++ "ouroboros_macro",
++ "static_assertions",
++]
++
++[[package]]
++name = "ouroboros_macro"
++version = "0.18.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3c7028bdd3d43083f6d8d4d5187680d0d3560d54df4cc9d752005268b41e64d0"
++dependencies = [
++ "heck 0.4.1",
++ "proc-macro2",
++ "proc-macro2-diagnostics",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "outref"
+ version = "0.5.2"
+@@ -4765,7 +4902,7 @@ dependencies = [
+  "libc",
+  "redox_syscall",
+  "smallvec",
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -5239,6 +5376,19 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "proc-macro2-diagnostics"
++version = "0.10.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++ "version_check",
++ "yansi",
++]
++
+ [[package]]
+ name = "prost"
+ version = "0.14.4"
+@@ -5392,6 +5542,7 @@ dependencies = [
+  "libc",
+  "rand_chacha 0.3.1",
+  "rand_core 0.6.4",
++ "serde",
+ ]
+ 
+ [[package]]
+@@ -5442,6 +5593,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+ dependencies = [
+  "getrandom 0.2.17",
++ "serde",
+ ]
+ 
+ [[package]]
+@@ -6168,6 +6320,17 @@ dependencies = [
+  "untrusted 0.9.0",
+ ]
+ 
++[[package]]
++name = "sealed"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "22f968c5ea23d555e670b449c1c5e7b2fc399fdaec1d304a17cd48e288abc107"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "secrecy"
+ version = "0.8.0"
+@@ -6283,6 +6446,12 @@ dependencies = [
+  "serde_core",
+ ]
+ 
++[[package]]
++name = "seq-macro"
++version = "0.3.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1bc711410fbe7399f390ca1c3b60ad0f53f80e95c5eb935e52268a0e2cd49acc"
++
+ [[package]]
+ name = "serde"
+ version = "1.0.229"
+@@ -6493,6 +6662,12 @@ dependencies = [
+  "digest 0.10.7",
+ ]
+ 
++[[package]]
++name = "sha1_smol"
++version = "1.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
++
+ [[package]]
+ name = "sha2"
+ version = "0.10.9"
+@@ -6949,7 +7124,21 @@ dependencies = [
+  "libc",
+  "memchr",
+  "ntapi",
+- "windows",
++ "windows 0.57.0",
++]
++
++[[package]]
++name = "sysinfo"
++version = "0.37.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "16607d5caffd1c07ce073528f9ed972d88db15dd44023fa57142963be3feb11f"
++dependencies = [
++ "libc",
++ "memchr",
++ "ntapi",
++ "objc2-core-foundation",
++ "objc2-io-kit",
++ "windows 0.61.3",
+ ]
+ 
+ [[package]]
+@@ -7279,6 +7468,7 @@ dependencies = [
+  "futures-core",
+  "pin-project-lite",
+  "tokio",
++ "tokio-util",
+ ]
+ 
+ [[package]]
+@@ -7800,6 +7990,7 @@ dependencies = [
+  "idna",
+  "percent-encoding",
+  "serde",
++ "serde_derive",
+ ]
+ 
+ [[package]]
+@@ -7842,6 +8033,7 @@ dependencies = [
+  "js-sys",
+  "rand 0.10.2",
+  "serde_core",
++ "sha1_smol",
+  "wasm-bindgen",
+ ]
+ 
+@@ -8649,22 +8841,68 @@ version = "0.57.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
+ dependencies = [
+- "windows-core",
++ "windows-core 0.57.0",
+  "windows-targets 0.52.6",
+ ]
+ 
++[[package]]
++name = "windows"
++version = "0.61.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
++dependencies = [
++ "windows-collections",
++ "windows-core 0.61.2",
++ "windows-future",
++ "windows-link 0.1.3",
++ "windows-numerics",
++]
++
++[[package]]
++name = "windows-collections"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
++dependencies = [
++ "windows-core 0.61.2",
++]
++
+ [[package]]
+ name = "windows-core"
+ version = "0.57.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
+ dependencies = [
+- "windows-implement",
+- "windows-interface",
++ "windows-implement 0.57.0",
++ "windows-interface 0.57.0",
+  "windows-result 0.1.2",
+  "windows-targets 0.52.6",
+ ]
+ 
++[[package]]
++name = "windows-core"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c0fdd3ddb90610c7638aa2b3a3ab2904fb9e5cdbecc643ddb3647212781c4ae3"
++dependencies = [
++ "windows-implement 0.60.2",
++ "windows-interface 0.59.3",
++ "windows-link 0.1.3",
++ "windows-result 0.3.4",
++ "windows-strings 0.4.2",
++]
++
++[[package]]
++name = "windows-future"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
++dependencies = [
++ "windows-core 0.61.2",
++ "windows-link 0.1.3",
++ "windows-threading",
++]
++
+ [[package]]
+ name = "windows-implement"
+ version = "0.57.0"
+@@ -8676,6 +8914,17 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "windows-implement"
++version = "0.60.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "windows-interface"
+ version = "0.57.0"
+@@ -8687,21 +8936,48 @@ dependencies = [
+  "syn 2.0.119",
+ ]
+ 
++[[package]]
++name = "windows-interface"
++version = "0.59.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
++[[package]]
++name = "windows-link"
++version = "0.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5e6ad25900d524eaabdbbb96d20b4311e1e7ae1699af4fb28c17ae66c80d798a"
++
+ [[package]]
+ name = "windows-link"
+ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+ 
++[[package]]
++name = "windows-numerics"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
++dependencies = [
++ "windows-core 0.61.2",
++ "windows-link 0.1.3",
++]
++
+ [[package]]
+ name = "windows-registry"
+ version = "0.6.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+ dependencies = [
+- "windows-link",
++ "windows-link 0.2.1",
+  "windows-result 0.4.1",
+- "windows-strings",
++ "windows-strings 0.5.1",
+ ]
+ 
+ [[package]]
+@@ -8713,13 +8989,31 @@ dependencies = [
+  "windows-targets 0.52.6",
+ ]
+ 
++[[package]]
++name = "windows-result"
++version = "0.3.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "56f42bd332cc6c8eac5af113fc0c1fd6a8fd2aa08a0119358686e5160d0586c6"
++dependencies = [
++ "windows-link 0.1.3",
++]
++
+ [[package]]
+ name = "windows-result"
+ version = "0.4.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
+ dependencies = [
+- "windows-link",
++ "windows-link 0.2.1",
++]
++
++[[package]]
++name = "windows-strings"
++version = "0.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
++dependencies = [
++ "windows-link 0.1.3",
+ ]
+ 
+ [[package]]
+@@ -8728,7 +9022,7 @@ version = "0.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
+ dependencies = [
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -8764,7 +9058,7 @@ version = "0.61.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
+ dependencies = [
+- "windows-link",
++ "windows-link 0.2.1",
+ ]
+ 
+ [[package]]
+@@ -8798,6 +9092,15 @@ dependencies = [
+  "windows_x86_64_msvc 0.52.6",
+ ]
+ 
++[[package]]
++name = "windows-threading"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6"
++dependencies = [
++ "windows-link 0.1.3",
++]
++
+ [[package]]
+ name = "windows_aarch64_gnullvm"
+ version = "0.48.5"
+diff --git a/Cargo.toml b/Cargo.toml
+index eb554faa..f5f0061e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -19,6 +19,7 @@ members = [
+   "crates/arora-hal",
+   "crates/arora-hal-restful",
+   "crates/arora-hal-ros2",
++  "crates/arora-hal-naoqi",
+   "crates/arora-bridge",
+   "crates/arora-engine",
+   "crates/arora-buffers",
+@@ -56,6 +57,7 @@ default-members = [
+   "crates/arora-hal",
+   "crates/arora-hal-restful",
+   "crates/arora-hal-ros2",
++  "crates/arora-hal-naoqi",
+   "crates/arora-bridge",
+   "crates/arora-engine",
+   "crates/arora-buffers",
+diff --git a/crates/arora-hal-naoqi/CHANGELOG.md b/crates/arora-hal-naoqi/CHANGELOG.md
+new file mode 100644
+index 00000000..d3f09d2b
+--- /dev/null
++++ b/crates/arora-hal-naoqi/CHANGELOG.md
+@@ -0,0 +1,19 @@
++# Changelog
++
++All notable changes to `arora-hal-naoqi`. The format follows
++[Keep a Changelog](https://keepachangelog.com/); versions follow
++[Semantic Versioning](https://semver.org/).
++
++## [0.1.0] - 2026-09-29
++
++### Added
++
++- `NaoqiHal`: NAO and Pepper robots as Arora devices over their NAOqi middleware,
++  through the `qi` crate of `libqi-rs` (pure Rust, no C++ SDK, no cross-compilation).
++- Sensed keys: `<joint_id>.position|velocity|stiffness|temperature|current`,
++  `battery.charge|current|charging`, `imu.angle.{x,y}`, `imu.gyroscope.{x,y,z}`,
++  `imu.accelerometer.{x,y,z}`, `sonar.{left,right}.distance`, `touch.head.*`,
++  `touch.hand.*`, `bumper.*`, `chest_button`.
++- Commanded keys: `<joint_id>.target_position`, `<joint_id>.target_stiffness`, `text`,
++  `led.<group>.color`, `led.<group>.intensity`, `velocity.{x,y}`, `rotation.z`.
++- `arora-naoqi` runner binary (feature `runner`).
+diff --git a/crates/arora-hal-naoqi/Cargo.toml b/crates/arora-hal-naoqi/Cargo.toml
+new file mode 100644
+index 00000000..c0aac683
+--- /dev/null
++++ b/crates/arora-hal-naoqi/Cargo.toml
+@@ -0,0 +1,41 @@
++[package]
++name = "arora-hal-naoqi"
++version = "0.1.0"
++edition = "2021"
++license = "MIT"
++description = "NAOqi HAL for Arora: drives NAO and Pepper robots through the qi framework (libqi-rs) as Arora devices"
++
++[lib]
++name = "arora_hal_naoqi"
++
++# The device runner: connects to a robot's NAOqi and runs it as an Arora device.
++[[bin]]
++name = "arora-naoqi"
++path = "src/bin/arora-naoqi.rs"
++required-features = ["runner"]
++
++[features]
++# The arora-naoqi binary: pulls the full arora runtime with the Semio Studio
++# connection. The library (the HAL itself) stays lean without it.
++runner = ["dep:arora", "dep:anyhow"]
++
++[dependencies]
++anyhow = { version = "1", optional = true }
++arora-hal = { path = "../arora-hal", version = "4" }
++arora-types = { path = "../arora-types", version = "3" }
++arora = { path = "../arora", version = "11", features = ["studio-bridge"], optional = true }
++async-trait = "0.1"
++futures = "0.3"
++log = "0.4"
++# The Rust implementation of the qi framework (libqi), the NAOqi middleware. The package is
++# `libqi-vibe`; the library is used as `qi`. Pinned to a commit until libqi-vibe 0.1.0 is on
++# crates.io, then `qi = { package = "libqi-vibe", version = "0.1" }`.
++qi = { package = "libqi-vibe", git = "https://github.com/victorpaleologue/libqi-rs-vibe", rev = "39a661bd048482a952fe31c85ac1ce697e414cc0" }
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++thiserror = "2"
++# rt, time, sync: the sensor sampling and queued-write tasks run on the caller's runtime.
++tokio = { version = "1", features = ["rt", "time", "sync"] }
++
++[dev-dependencies]
++tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+diff --git a/crates/arora-hal-naoqi/configs/nao.json b/crates/arora-hal-naoqi/configs/nao.json
+new file mode 100644
+index 00000000..e15adf14
+--- /dev/null
++++ b/crates/arora-hal-naoqi/configs/nao.json
+@@ -0,0 +1,8 @@
++{
++  "url": "tcp://127.0.0.1:9559",
++  "model_family": "nao",
++  "joint_ids": { "mode": "snake_case" },
++  "sensor_period_ms": 50,
++  "joint_speed_fraction": 0.3,
++  "sensors": { "joints": true, "battery": true, "inertial": true, "sonar": true, "touch": true }
++}
+diff --git a/crates/arora-hal-naoqi/examples/naoqi_probe.rs b/crates/arora-hal-naoqi/examples/naoqi_probe.rs
+new file mode 100644
+index 00000000..40920e04
+--- /dev/null
++++ b/crates/arora-hal-naoqi/examples/naoqi_probe.rs
+@@ -0,0 +1,56 @@
++//! Probes a NAOqi robot (or `naoqi-sim`) through the HAL: describes it, streams a few seconds
++//! of updates, then commands a joint, says a sentence and lights the face LEDs.
++//!
++//! Usage: `cargo run -p arora-hal-naoqi --example naoqi_probe -- tcp://127.0.0.1:9559`
++
++use std::time::Duration;
++
++use arora_hal::Hal;
++use arora_hal_naoqi::{keys, NaoqiHal, NaoqiRobotConfig};
++use arora_types::data::{Key, StateChange};
++use arora_types::value::Value;
++use futures::StreamExt;
++
++#[tokio::main]
++async fn main() -> Result<(), Box<dyn std::error::Error>> {
++    let url = std::env::args()
++        .nth(1)
++        .unwrap_or_else(|| "tcp://127.0.0.1:9559".to_string());
++    let hal = NaoqiHal::new(NaoqiRobotConfig::with_url(url)).await?;
++    println!("description: {:?}", hal.describe().await);
++
++    let mut updates = hal.updates();
++    let mut received = 0usize;
++    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
++    while let Ok(Some(change)) = tokio::time::timeout_at(deadline, updates.next()).await {
++        received += change.len();
++        for key in [
++            "head_yaw.position",
++            "battery.charge",
++            "imu.angle.x",
++            "sonar.left.distance",
++        ] {
++            if let Some(value) = change.set.get(&Key::from(key)) {
++                println!("{key} = {value:?}");
++            }
++        }
++    }
++    println!("{received} key updates in 2 seconds");
++
++    let mut change = StateChange::set("head_yaw.target_position", Value::F64(0.4));
++    change
++        .set
++        .insert(Key::from(keys::TEXT), Some(Value::from("Hello from Arora")));
++    change.set.insert(
++        Key::from("led.FaceLeds.color"),
++        Some(Value::U32(0x0000_ff00)),
++    );
++    hal.write(change).await?;
++    tokio::time::sleep(Duration::from_secs(2)).await;
++    let read = hal
++        .read(&[Key::from("head_yaw.position"), Key::from(keys::TEXT)])
++        .await?;
++    println!("head_yaw.position after the command: {:?}", read[0]);
++    println!("text after speaking (unset once said): {:?}", read[1]);
++    Ok(())
++}
+diff --git a/crates/arora-hal-naoqi/readme.md b/crates/arora-hal-naoqi/readme.md
+new file mode 100644
+index 00000000..279539f9
+--- /dev/null
++++ b/crates/arora-hal-naoqi/readme.md
+@@ -0,0 +1,35 @@
++# arora-hal-naoqi
++
++NAO and Pepper robots as Arora devices, over their NAOqi middleware.
++
++The HAL talks to the robot with [`libqi-rs`](https://github.com/victorpaleologue/libqi-rs-vibe),
++a Rust implementation of the `qi` framework: no C++ SDK, no cross-compilation, the HAL
++runs on any host that reaches the robot over TCP (port 9559).
++
++```sh
++cargo run --features runner --bin arora-naoqi -- tcp://nao.local:9559
++# or with a configuration file (see configs/nao.json)
++cargo run --features runner --bin arora-naoqi -- configs/nao.json
++```
++
++## Keys
++
++Joint ids are the NAOqi joint names in snake case (`HeadYaw` → `head_yaw`,
++`LShoulderPitch` → `l_shoulder_pitch`), unless the configuration overrides them.
++
++| Key | Direction | NAOqi source or target |
++|---|---|---|
++| `<joint_id>.position` (rad), `.velocity` (rad/s, derived), `.stiffness`, `.temperature` (°C), `.current` (A) | sensed | `ALMemory` `Device/SubDeviceList/<Joint>/…` |
++| `battery.charge` (0..1), `battery.current` (A), `battery.charging` | sensed | `ALMemory` battery keys |
++| `imu.angle.{x,y}`, `imu.gyroscope.{x,y,z}`, `imu.accelerometer.{x,y,z}` | sensed | `ALMemory` inertial sensor keys |
++| `sonar.{left,right}.distance` (m) | sensed | `ALMemory` ultrasound keys |
++| `touch.head.{front,middle,rear}`, `touch.hand.{left,right}.{back,left,right}`, `bumper.{left,right}`, `chest_button` | sensed (events) | `ALMemory` tactile events |
++| `<joint_id>.target_position` (rad) | commanded | `ALMotion.setAngles` |
++| `<joint_id>.target_stiffness` (0..1) | commanded | `ALMotion.setStiffnesses` |
++| `text` | commanded | `ALTextToSpeech.say`; the key is unset once spoken so the same text can be said again |
++| `led.<group>.color` (`0xRRGGBB`), `led.<group>.intensity` | commanded | `ALLeds.fadeRGB`, `ALLeds.setIntensity` |
++| `velocity.{x,y}`, `rotation.z` (normalized -1..1) | commanded | `ALMotion.moveToward` |
++
++Numeric sensor keys are sampled from `ALMemory` at `sensor_period_ms` (50 ms by default)
++in one `getListData` call, and only changed values are reported. Touch keys are driven
++by `ALMemory` events.
+diff --git a/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs b/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs
+new file mode 100644
+index 00000000..ead0e731
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs
+@@ -0,0 +1,41 @@
++//! arora-naoqi: runs a NAOqi robot (NAO, Pepper) as an Arora device.
++//!
++//! Usage: `arora-naoqi <tcp://host:9559 | config.json> [overrides.json]`
++//!
++//! The robot is picked at runtime: the first argument (or the `ROBOT` env var) is the
++//! address of its NAOqi or a path to a `NaoqiRobotConfig` JSON file (see
++//! `configs/nao.json`). An optional second JSON file overrides the selected config. Device
++//! identity, registration and token handling are env-driven inside arora's Semio Studio
++//! runner.
++
++use arora_hal_naoqi::{NaoqiHal, NaoqiRobotConfig};
++
++fn load_config(selector: &str) -> NaoqiRobotConfig {
++    if selector.starts_with("tcp://") {
++        return NaoqiRobotConfig::with_url(selector);
++    }
++    let file = std::fs::File::open(selector)
++        .unwrap_or_else(|e| panic!("failed to open robot config {selector}: {e}"));
++    serde_json::from_reader(file)
++        .unwrap_or_else(|e| panic!("failed to parse robot config {selector}: {e}"))
++}
++
++#[tokio::main]
++async fn main() -> anyhow::Result<()> {
++    let mut args = std::env::args().skip(1);
++    let selector = args
++        .next()
++        .or_else(|| std::env::var("ROBOT").ok())
++        .expect("usage: arora-naoqi <tcp://host:9559 | config.json> [overrides.json]");
++    let mut config = load_config(&selector);
++    if let Some(overrides_path) = args.next() {
++        config.apply_overrides(load_config(&overrides_path));
++    }
++
++    // One runtime carries everything: the HAL's tasks spawn on it at construction, and
++    // arora drives the device on it.
++    let hal = NaoqiHal::new(config)
++        .await
++        .map_err(|e| anyhow::anyhow!("failed to start the NAOqi HAL: {e}"))?;
++    arora::run_with_hal(Box::new(hal)).await
++}
+diff --git a/crates/arora-hal-naoqi/src/config.rs b/crates/arora-hal-naoqi/src/config.rs
+new file mode 100644
+index 00000000..a132805f
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/config.rs
+@@ -0,0 +1,230 @@
++use std::collections::HashMap;
++
++use serde::{Deserialize, Serialize};
++
++use crate::naoqi_error::NaoqiRobotError;
++
++/// The configuration of a NAOqi robot.
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct NaoqiRobotConfig {
++    /// The address of the robot's NAOqi (`tcp://<host>:9559`).
++    #[serde(default = "default_url")]
++    pub url: String,
++    /// The user of NAOqi authentication (NAOqi 2.5 and later), `nao` when a password is set
++    /// without a user.
++    #[serde(default)]
++    pub user: Option<String>,
++    /// The password of NAOqi authentication; none when the robot does not require it.
++    #[serde(default)]
++    pub password: Option<String>,
++    /// The robot's model family, reported in the HAL description (queried from the robot
++    /// when absent).
++    #[serde(default)]
++    pub model_family: Option<String>,
++    /// The robot's hardware version, reported in the HAL description (queried when absent).
++    #[serde(default)]
++    pub hardware_version: Option<String>,
++    /// The robot's software version, reported in the HAL description (queried when absent).
++    #[serde(default)]
++    pub software_version: Option<String>,
++    /// How NAOqi joint names map to Arora joint ids.
++    #[serde(default)]
++    pub joint_ids: JointIdMapping,
++    /// The period of the sampling of `ALMemory` sensors, in milliseconds.
++    #[serde(default = "default_sensor_period_ms")]
++    pub sensor_period_ms: u64,
++    /// The fraction of the maximum joint speed used to reach targets (`ALMotion.setAngles`).
++    #[serde(default = "default_joint_speed_fraction")]
++    pub joint_speed_fraction: f64,
++    /// Which sensor families are sampled.
++    #[serde(default)]
++    pub sensors: SensorsConfig,
++}
++
++fn default_url() -> String {
++    "tcp://127.0.0.1:9559".to_string()
++}
++
++fn default_sensor_period_ms() -> u64 {
++    50
++}
++
++fn default_joint_speed_fraction() -> f64 {
++    0.3
++}
++
++impl Default for NaoqiRobotConfig {
++    fn default() -> Self {
++        Self {
++            url: default_url(),
++            user: None,
++            password: None,
++            model_family: None,
++            hardware_version: None,
++            software_version: None,
++            joint_ids: JointIdMapping::default(),
++            sensor_period_ms: default_sensor_period_ms(),
++            joint_speed_fraction: default_joint_speed_fraction(),
++            sensors: SensorsConfig::default(),
++        }
++    }
++}
++
++impl NaoqiRobotConfig {
++    /// A configuration connecting to the given address with the defaults.
++    pub fn with_url(url: impl Into<String>) -> Self {
++        Self {
++            url: url.into(),
++            ..Default::default()
++        }
++    }
++
++    /// Validate the configuration.
++    pub fn validate(&self) -> Result<(), NaoqiRobotError> {
++        if self.url.is_empty() {
++            return Err(NaoqiRobotError::Config("URL cannot be empty".to_string()));
++        }
++        if !self.url.starts_with("tcp://") {
++            return Err(NaoqiRobotError::Config(format!(
++                "URL must be a plain TCP address (tcp://<host>:<port>), got {}",
++                self.url
++            )));
++        }
++        if self.sensor_period_ms == 0 {
++            return Err(NaoqiRobotError::Config(
++                "sensor_period_ms must be positive".to_string(),
++            ));
++        }
++        if !(self.joint_speed_fraction > 0.0 && self.joint_speed_fraction <= 1.0) {
++            return Err(NaoqiRobotError::Config(
++                "joint_speed_fraction must be in (0, 1]".to_string(),
++            ));
++        }
++        Ok(())
++    }
++
++    /// Apply overrides to the current configuration.
++    pub fn apply_overrides(&mut self, overrides: NaoqiRobotConfig) {
++        if overrides.url != default_url() {
++            self.url = overrides.url;
++        }
++        if overrides.user.is_some() {
++            self.user = overrides.user;
++        }
++        if overrides.password.is_some() {
++            self.password = overrides.password;
++        }
++        if overrides.model_family.is_some() {
++            self.model_family = overrides.model_family;
++        }
++        if overrides.hardware_version.is_some() {
++            self.hardware_version = overrides.hardware_version;
++        }
++        if overrides.software_version.is_some() {
++            self.software_version = overrides.software_version;
++        }
++        if !matches!(overrides.joint_ids, JointIdMapping::SnakeCase) {
++            self.joint_ids = overrides.joint_ids;
++        }
++        if overrides.sensor_period_ms != default_sensor_period_ms() {
++            self.sensor_period_ms = overrides.sensor_period_ms;
++        }
++        if overrides.joint_speed_fraction != default_joint_speed_fraction() {
++            self.joint_speed_fraction = overrides.joint_speed_fraction;
++        }
++        self.sensors = overrides.sensors;
++    }
++}
++
++/// How NAOqi joint names (`LShoulderPitch`) become Arora joint ids.
++#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(tag = "mode", rename_all = "snake_case")]
++pub enum JointIdMapping {
++    /// The snake case of the NAOqi name: `LShoulderPitch` → `l_shoulder_pitch`.
++    #[default]
++    SnakeCase,
++    /// Only the listed joints, with the given ids.
++    Override { ids: HashMap<String, String> },
++    /// The snake case ids, with the listed ones replaced.
++    Extend { ids: HashMap<String, String> },
++}
++
++/// The sensor families sampled from the robot.
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
++pub struct SensorsConfig {
++    #[serde(default = "default_true")]
++    pub joints: bool,
++    #[serde(default = "default_true")]
++    pub battery: bool,
++    #[serde(default = "default_true")]
++    pub inertial: bool,
++    #[serde(default = "default_true")]
++    pub sonar: bool,
++    #[serde(default = "default_true")]
++    pub touch: bool,
++}
++
++fn default_true() -> bool {
++    true
++}
++
++impl Default for SensorsConfig {
++    fn default() -> Self {
++        Self {
++            joints: true,
++            battery: true,
++            inertial: true,
++            sonar: true,
++            touch: true,
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn defaults_are_valid_and_overridable() {
++        let mut config = NaoqiRobotConfig::default();
++        assert!(config.validate().is_ok());
++        config.apply_overrides(NaoqiRobotConfig {
++            url: "tcp://nao.local:9559".into(),
++            password: Some("secret".into()),
++            ..Default::default()
++        });
++        assert_eq!(config.url, "tcp://nao.local:9559");
++        assert_eq!(config.password.as_deref(), Some("secret"));
++        assert_eq!(config.sensor_period_ms, 50);
++    }
++
++    #[test]
++    fn invalid_configurations_are_rejected() {
++        assert!(NaoqiRobotConfig::with_url("").validate().is_err());
++        assert!(NaoqiRobotConfig::with_url("tcps://nao:9503")
++            .validate()
++            .is_err());
++        let config = NaoqiRobotConfig {
++            sensor_period_ms: 0,
++            ..Default::default()
++        };
++        assert!(config.validate().is_err());
++        let config = NaoqiRobotConfig {
++            joint_speed_fraction: 1.5,
++            ..Default::default()
++        };
++        assert!(config.validate().is_err());
++    }
++
++    #[test]
++    fn joint_id_mapping_deserializes() {
++        let mapping: JointIdMapping =
++            serde_json::from_str(r#"{"mode": "extend", "ids": {"HeadYaw": "neck"}}"#).unwrap();
++        assert_eq!(
++            mapping,
++            JointIdMapping::Extend {
++                ids: HashMap::from([("HeadYaw".to_string(), "neck".to_string())])
++            }
++        );
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/conversions/joints.rs b/crates/arora-hal-naoqi/src/conversions/joints.rs
+new file mode 100644
+index 00000000..16692aaf
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/conversions/joints.rs
+@@ -0,0 +1,119 @@
++use std::collections::HashMap;
++
++use crate::config::JointIdMapping;
++use crate::conversions::keys;
++
++/// The joints of the robot: NAOqi names, Arora ids and the `ALMemory` keys sampled for them.
++#[derive(Debug, Clone, Default)]
++pub(crate) struct JointTable {
++    /// NAOqi names, in the order of `ALMotion.getBodyNames("Body")`.
++    names: Vec<String>,
++    /// Arora ids, aligned with `names`.
++    ids: Vec<String>,
++    by_id: HashMap<String, usize>,
++}
++
++/// The `ALMemory` sub-paths sampled for every joint, with the key component they feed.
++const JOINT_SENSORS: &[(&str, &str)] = &[
++    ("Position/Sensor", keys::POSITION),
++    ("Hardness/Actuator", keys::STIFFNESS),
++    ("Temperature/Sensor", keys::TEMPERATURE),
++    ("ElectricCurrent/Sensor", keys::CURRENT),
++];
++
++impl JointTable {
++    pub(crate) fn new(names: Vec<String>, mapping: &JointIdMapping) -> Self {
++        let (names, ids): (Vec<String>, Vec<String>) = names
++            .into_iter()
++            .filter_map(|name| {
++                let id = match mapping {
++                    JointIdMapping::SnakeCase => keys::joint_id_from_naoqi_name(&name),
++                    JointIdMapping::Override { ids } => ids.get(&name)?.clone(),
++                    JointIdMapping::Extend { ids } => ids
++                        .get(&name)
++                        .cloned()
++                        .unwrap_or_else(|| keys::joint_id_from_naoqi_name(&name)),
++                };
++                Some((name, id))
++            })
++            .unzip();
++        let by_id = ids
++            .iter()
++            .enumerate()
++            .map(|(index, id)| (id.clone(), index))
++            .collect();
++        Self { names, ids, by_id }
++    }
++
++    pub(crate) fn len(&self) -> usize {
++        self.names.len()
++    }
++
++    /// The NAOqi name of a joint from its Arora id.
++    pub(crate) fn naoqi_name(&self, id: &str) -> Option<&str> {
++        self.by_id.get(id).map(|&index| self.names[index].as_str())
++    }
++
++    /// The Arora ids, aligned with the NAOqi names.
++    #[cfg(test)]
++    pub(crate) fn ids(&self) -> &[String] {
++        &self.ids
++    }
++
++    /// The `ALMemory` keys sampled for the joints, with the Arora key each one feeds; the
++    /// order is stable and matches the values `ALMemory.getListData` returns.
++    pub(crate) fn memory_keys(&self) -> Vec<(String, String)> {
++        self.names
++            .iter()
++            .zip(&self.ids)
++            .flat_map(|(name, id)| {
++                JOINT_SENSORS.iter().map(move |(path, component)| {
++                    (
++                        keys::joint_memory_key(name, path),
++                        format!("{id}.{component}"),
++                    )
++                })
++            })
++            .collect()
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn table_maps_names_and_ids() {
++        let table = JointTable::new(
++            vec!["HeadYaw".into(), "LShoulderPitch".into()],
++            &JointIdMapping::Extend {
++                ids: HashMap::from([("HeadYaw".to_string(), "neck".to_string())]),
++            },
++        );
++        assert_eq!(table.len(), 2);
++        assert_eq!(table.ids(), ["neck", "l_shoulder_pitch"]);
++        assert_eq!(table.naoqi_name("neck"), Some("HeadYaw"));
++        assert_eq!(table.naoqi_name("l_shoulder_pitch"), Some("LShoulderPitch"));
++        assert_eq!(table.naoqi_name("nope"), None);
++        let keys = table.memory_keys();
++        assert_eq!(keys.len(), 8);
++        assert_eq!(
++            keys[0],
++            (
++                "Device/SubDeviceList/HeadYaw/Position/Sensor/Value".to_string(),
++                "neck.position".to_string()
++            )
++        );
++    }
++
++    #[test]
++    fn override_keeps_listed_joints_only() {
++        let table = JointTable::new(
++            vec!["HeadYaw".into(), "HeadPitch".into()],
++            &JointIdMapping::Override {
++                ids: HashMap::from([("HeadPitch".to_string(), "nod".to_string())]),
++            },
++        );
++        assert_eq!(table.ids(), ["nod"]);
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/conversions/keys.rs b/crates/arora-hal-naoqi/src/conversions/keys.rs
+new file mode 100644
+index 00000000..6aaafd8c
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/conversions/keys.rs
+@@ -0,0 +1,157 @@
++//! The Arora key vocabulary of NAOqi robots.
++//!
++//! Keys follow the `entity.component` grammar of Arora: joints are entities named after
++//! their NAOqi name in snake case (`head_yaw`), the other entities are fixed.
++
++/// The text to say (`ALTextToSpeech.say`); unset by the HAL once spoken.
++pub const TEXT: &str = "text";
++/// The battery charge, from 0 to 1.
++pub const BATTERY_CHARGE: &str = "battery.charge";
++/// The battery current in amperes, positive when charging.
++pub const BATTERY_CURRENT: &str = "battery.current";
++/// Whether the battery is charging.
++pub const BATTERY_CHARGING: &str = "battery.charging";
++/// The forward velocity command of the base, normalized from -1 to 1.
++pub const VELOCITY_X: &str = "velocity.x";
++/// The lateral velocity command of the base, normalized from -1 to 1.
++pub const VELOCITY_Y: &str = "velocity.y";
++/// The rotation velocity command of the base, normalized from -1 to 1.
++pub const ROTATION_Z: &str = "rotation.z";
++/// The entity of LED groups: `led.<group>.color`, `led.<group>.intensity`.
++pub const LED_ENTITY: &str = "led";
++
++/// The component of a joint key holding its measured position, in radians.
++pub const POSITION: &str = "position";
++/// The component of a joint key holding its velocity, in radians per second.
++pub const VELOCITY: &str = "velocity";
++/// The component of a joint key holding its stiffness, from 0 to 1.
++pub const STIFFNESS: &str = "stiffness";
++/// The component of a joint key holding its temperature, in degrees Celsius.
++pub const TEMPERATURE: &str = "temperature";
++/// The component of a joint key holding its electric current, in amperes.
++pub const CURRENT: &str = "current";
++/// The component of a joint key commanding its position, in radians.
++pub const TARGET_POSITION: &str = "target_position";
++/// The component of a joint key commanding its stiffness, from 0 to 1.
++pub const TARGET_STIFFNESS: &str = "target_stiffness";
++
++/// The `ALMemory` keys of the battery, with the Arora keys they feed.
++pub const BATTERY_MEMORY_KEYS: &[(&str, &str)] = &[
++    (
++        "Device/SubDeviceList/Battery/Charge/Sensor/Value",
++        BATTERY_CHARGE,
++    ),
++    (
++        "Device/SubDeviceList/Battery/Current/Sensor/Value",
++        BATTERY_CURRENT,
++    ),
++];
++
++/// The `ALMemory` keys of the inertial unit, with the Arora keys they feed.
++pub const INERTIAL_MEMORY_KEYS: &[(&str, &str)] = &[
++    (
++        "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value",
++        "imu.angle.x",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/AngleY/Sensor/Value",
++        "imu.angle.y",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/GyroscopeX/Sensor/Value",
++        "imu.gyroscope.x",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/GyroscopeY/Sensor/Value",
++        "imu.gyroscope.y",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/GyroscopeZ/Sensor/Value",
++        "imu.gyroscope.z",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/AccelerometerX/Sensor/Value",
++        "imu.accelerometer.x",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/AccelerometerY/Sensor/Value",
++        "imu.accelerometer.y",
++    ),
++    (
++        "Device/SubDeviceList/InertialSensor/AccelerometerZ/Sensor/Value",
++        "imu.accelerometer.z",
++    ),
++];
++
++/// The `ALMemory` keys of the sonars, with the Arora keys they feed.
++pub const SONAR_MEMORY_KEYS: &[(&str, &str)] = &[
++    (
++        "Device/SubDeviceList/US/Left/Sensor/Value",
++        "sonar.left.distance",
++    ),
++    (
++        "Device/SubDeviceList/US/Right/Sensor/Value",
++        "sonar.right.distance",
++    ),
++];
++
++/// The `ALMemory` touch events, with the boolean Arora keys they drive.
++pub const TOUCH_EVENTS: &[(&str, &str)] = &[
++    ("FrontTactilTouched", "touch.head.front"),
++    ("MiddleTactilTouched", "touch.head.middle"),
++    ("RearTactilTouched", "touch.head.rear"),
++    ("HandLeftBackTouched", "touch.hand.left.back"),
++    ("HandLeftLeftTouched", "touch.hand.left.left"),
++    ("HandLeftRightTouched", "touch.hand.left.right"),
++    ("HandRightBackTouched", "touch.hand.right.back"),
++    ("HandRightLeftTouched", "touch.hand.right.left"),
++    ("HandRightRightTouched", "touch.hand.right.right"),
++    ("LeftBumperPressed", "bumper.left"),
++    ("RightBumperPressed", "bumper.right"),
++    ("ChestButtonPressed", "chest_button"),
++];
++
++/// The Arora joint id of a NAOqi joint name: `LShoulderPitch` → `l_shoulder_pitch`.
++pub fn joint_id_from_naoqi_name(name: &str) -> String {
++    let mut id = String::with_capacity(name.len() + 4);
++    for (index, c) in name.chars().enumerate() {
++        if c.is_ascii_uppercase() {
++            if index > 0 {
++                id.push('_');
++            }
++            id.push(c.to_ascii_lowercase());
++        } else {
++            id.push(c);
++        }
++    }
++    id
++}
++
++/// The `ALMemory` key of a joint sensor or actuator value.
++pub fn joint_memory_key(joint: &str, path: &str) -> String {
++    format!("Device/SubDeviceList/{joint}/{path}/Value")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn joint_ids_are_snake_case() {
++        assert_eq!(joint_id_from_naoqi_name("HeadYaw"), "head_yaw");
++        assert_eq!(
++            joint_id_from_naoqi_name("LShoulderPitch"),
++            "l_shoulder_pitch"
++        );
++        assert_eq!(joint_id_from_naoqi_name("LHipYawPitch"), "l_hip_yaw_pitch");
++        assert_eq!(joint_id_from_naoqi_name("RHand"), "r_hand");
++    }
++
++    #[test]
++    fn memory_keys_follow_the_device_tree() {
++        assert_eq!(
++            joint_memory_key("HeadYaw", "Position/Sensor"),
++            "Device/SubDeviceList/HeadYaw/Position/Sensor/Value"
++        );
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/conversions/mod.rs b/crates/arora-hal-naoqi/src/conversions/mod.rs
+new file mode 100644
+index 00000000..f3596146
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/conversions/mod.rs
+@@ -0,0 +1,9 @@
++//! Pure conversions between NAOqi names and values and Arora keys and values.
++
++pub mod keys;
++
++mod joints;
++pub(crate) use joints::JointTable;
++
++mod values;
++pub(crate) use values::{arora_f64, qi_f64, qi_list};
+diff --git a/crates/arora-hal-naoqi/src/conversions/values.rs b/crates/arora-hal-naoqi/src/conversions/values.rs
+new file mode 100644
+index 00000000..2f4da404
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/conversions/values.rs
+@@ -0,0 +1,73 @@
++use arora_types::value::Value as AroraValue;
++use qi::value::Value as QiValue;
++
++/// The number held by an Arora value, if numeric.
++pub(crate) fn arora_f64(value: &AroraValue) -> Option<f64> {
++    Some(match value {
++        AroraValue::F64(v) => *v,
++        AroraValue::F32(v) => f64::from(*v),
++        AroraValue::I8(v) => f64::from(*v),
++        AroraValue::I16(v) => f64::from(*v),
++        AroraValue::I32(v) => f64::from(*v),
++        AroraValue::I64(v) => *v as f64,
++        AroraValue::U8(v) => f64::from(*v),
++        AroraValue::U16(v) => f64::from(*v),
++        AroraValue::U32(v) => f64::from(*v),
++        AroraValue::U64(v) => *v as f64,
++        AroraValue::Boolean(v) => f64::from(u8::from(*v)),
++        _ => return None,
++    })
++}
++
++/// The number held by a `qi` value (an `ALValue`), if numeric; dynamics are unwrapped.
++pub(crate) fn qi_f64(value: &QiValue<'_>) -> Option<f64> {
++    Some(match value {
++        QiValue::Float32(v) => f64::from(v.0),
++        QiValue::Float64(v) => v.0,
++        QiValue::Int8(v) => f64::from(*v),
++        QiValue::Int16(v) => f64::from(*v),
++        QiValue::Int32(v) => f64::from(*v),
++        QiValue::Int64(v) => *v as f64,
++        QiValue::UInt8(v) => f64::from(*v),
++        QiValue::UInt16(v) => f64::from(*v),
++        QiValue::UInt32(v) => f64::from(*v),
++        QiValue::UInt64(v) => *v as f64,
++        QiValue::Bool(v) => f64::from(u8::from(*v)),
++        QiValue::Dynamic(inner) => return qi_f64(inner),
++        _ => return None,
++    })
++}
++
++/// The elements of a `qi` list value (an `ALValue` array); dynamics are unwrapped.
++pub(crate) fn qi_list(value: QiValue<'static>) -> Option<Vec<QiValue<'static>>> {
++    match value {
++        QiValue::List(items) | QiValue::Tuple(items) => Some(items),
++        QiValue::Dynamic(inner) => qi_list(*inner),
++        _ => None,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn numbers_convert_from_any_width() {
++        assert_eq!(arora_f64(&AroraValue::F32(1.5)), Some(1.5));
++        assert_eq!(arora_f64(&AroraValue::I32(-2)), Some(-2.0));
++        assert_eq!(arora_f64(&AroraValue::String("x".into())), None);
++        assert_eq!(qi_f64(&QiValue::Int32(3)), Some(3.0));
++        assert_eq!(
++            qi_f64(&QiValue::Dynamic(Box::new(QiValue::Float32(0.5.into())))),
++            Some(0.5)
++        );
++        assert_eq!(qi_f64(&QiValue::Unit), None);
++    }
++
++    #[test]
++    fn lists_unwrap_dynamics() {
++        let list = QiValue::Dynamic(Box::new(QiValue::List(vec![QiValue::Int32(1)])));
++        assert_eq!(qi_list(list), Some(vec![QiValue::Int32(1)]));
++        assert_eq!(qi_list(QiValue::Int32(1)), None);
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/lib.rs b/crates/arora-hal-naoqi/src/lib.rs
+new file mode 100644
+index 00000000..bc16d604
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/lib.rs
+@@ -0,0 +1,38 @@
++//! NAOqi robots (NAO, Pepper) as Arora HALs, over the `qi` framework.
++//!
++//! One [`arora_hal::Hal`] implementation, [`NaoqiHal`], connects to a robot's NAOqi with
++//! [`libqi-rs`](https://github.com/victorpaleologue/libqi-rs-vibe) and exposes it as an Arora
++//! device: joint states, battery, inertial unit, sonars and touch sensors flow in as keys;
++//! joint targets, stiffness, speech, LEDs and base velocity commands flow out to the
++//! NAOqi services (`ALMotion`, `ALTextToSpeech`, `ALLeds`). The key vocabulary is in
++//! [`keys`].
++//!
++//! The robot is described by a [`NaoqiRobotConfig`] (address, credentials, joint id
++//! mapping, sampling period); `configs/nao.json` is a sample.
++
++mod config;
++pub use config::{JointIdMapping, NaoqiRobotConfig, SensorsConfig};
++
++mod conversions;
++pub use conversions::keys;
++
++mod naoqi_error;
++pub use naoqi_error::NaoqiRobotError;
++
++mod naoqi_hal;
++pub use naoqi_hal::NaoqiHal;
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn nao_sample_config_parses() {
++        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/configs/nao.json");
++        let file = std::fs::File::open(path).expect("nao sample config should exist");
++        let config: NaoqiRobotConfig =
++            serde_json::from_reader(file).expect("nao sample config should parse");
++        assert!(config.validate().is_ok());
++        assert_eq!(config.model_family.as_deref(), Some("nao"));
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/naoqi_error.rs b/crates/arora-hal-naoqi/src/naoqi_error.rs
+new file mode 100644
+index 00000000..861b273e
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/naoqi_error.rs
+@@ -0,0 +1,30 @@
++use arora_hal::HalError;
++
++/// Errors of the NAOqi HAL.
++#[derive(Debug, thiserror::Error)]
++pub enum NaoqiRobotError {
++    /// The configuration is invalid.
++    #[error("configuration error: {0}")]
++    Config(String),
++    /// The robot could not be reached, or a service it must expose is missing.
++    #[error("connection to NAOqi failed: {0}")]
++    Connection(String),
++    /// A call to a NAOqi service failed.
++    #[error("NAOqi call failed: {0}")]
++    Qi(#[from] qi::Error),
++    /// A value could not be converted between Arora and NAOqi representations.
++    #[error("conversion error: {0}")]
++    Conversion(String),
++    /// Every NAOqi command of a write failed.
++    #[error("write failed: {0}")]
++    Write(String),
++}
++
++impl From<NaoqiRobotError> for HalError {
++    fn from(error: NaoqiRobotError) -> Self {
++        match error {
++            NaoqiRobotError::Connection(message) => HalError::Broken(message),
++            other => HalError::Other(other.to_string()),
++        }
++    }
++}
+diff --git a/crates/arora-hal-naoqi/src/naoqi_hal.rs b/crates/arora-hal-naoqi/src/naoqi_hal.rs
+new file mode 100644
+index 00000000..995d3e1d
+--- /dev/null
++++ b/crates/arora-hal-naoqi/src/naoqi_hal.rs
+@@ -0,0 +1,607 @@
++use std::sync::{Arc, Mutex, MutexGuard};
++use std::time::{Duration, Instant};
++
++use arora_hal::{Hal, HalDescription, HalResult, UpdatesStream};
++use arora_types::data::{Key, State, StateChange};
++use arora_types::value::Value;
++use async_trait::async_trait;
++use futures::channel::mpsc::UnboundedSender;
++use futures::StreamExt;
++use log::{debug, info, warn};
++use qi::value::{Dynamic, KeyDynValueMap, Value as QiValue};
++use qi::{AnyObject, ObjectExt};
++use tokio::task::AbortHandle;
++
++use crate::config::NaoqiRobotConfig;
++use crate::conversions::{arora_f64, keys, qi_f64, qi_list, JointTable};
++use crate::naoqi_error::NaoqiRobotError;
++
++type Node = qi::node::Node<qi::service_directory::Client>;
++
++/// A NAOqi robot (NAO, Pepper) as an [`arora_hal::Hal`], driven through the `qi` framework.
++///
++/// The robot's topology (joints, available services) is discovered at construction; the
++/// remaining state is interior-mutable so every trait method takes `&self`.
++///
++/// Sensors are sampled from `ALMemory` by a task at the configured period and touch events
++/// are received through `ALMemory` signals; both feed the current state and the `updates()`
++/// subscribers. Writes turn keys into NAOqi calls (`ALMotion.setAngles`,
++/// `ALTextToSpeech.say`, `ALLeds.fadeRGB`...): `write()` awaits them, `try_send` hands them
++/// to the queued-write task so the caller never waits on the robot.
++pub struct NaoqiHal {
++    inner: Arc<Inner>,
++    /// Feeds the queued-write task; dropping it (with the HAL) closes the channel, and the
++    /// task ends once the remaining backlog is flushed.
++    outbound: UnboundedSender<StateChange>,
++    /// The sampling and event tasks, aborted with the HAL.
++    tasks: Vec<AbortHandle>,
++}
++
++struct Inner {
++    config: NaoqiRobotConfig,
++    /// The node connected to the robot; the sessions to its services live as long as it does.
++    _node: Node,
++    memory: AnyObject,
++    motion: AnyObject,
++    tts: AnyObject,
++    leds: Option<AnyObject>,
++    joints: JointTable,
++    description: HalDescription,
++    /// The current state: sampled sensors, received events and cached commands.
++    current_state: Mutex<State>,
++    /// Observers registered through `updates()`.
++    subscribers: Mutex<Vec<UnboundedSender<StateChange>>>,
++    /// The last base velocity command `(x, y, theta)`, merged across its keys.
++    base_velocity: Mutex<[f64; 3]>,
++}
++
++/// What the sensor sampling keeps between two samples: the previous joint positions, to
++/// derive velocities.
++#[derive(Default)]
++struct Sampling {
++    previous_positions: Option<(Instant, Vec<(String, f64)>)>,
++}
++
++/// Fold `later` into `earlier`, per-key newest wins: applying the folded change equals
++/// applying both in order.
++fn fold_newest_wins(earlier: &mut StateChange, later: StateChange) {
++    for key in later.unset {
++        earlier.set.remove(&key);
++        earlier.unset.insert(key);
++    }
++    for (key, value) in later.set {
++        earlier.unset.remove(&key);
++        earlier.set.insert(key, value);
++    }
++}
++
++fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
++    mutex
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner())
++}
++
++async fn required_service(node: &Node, name: &str) -> Result<AnyObject, NaoqiRobotError> {
++    node.service(name).await.map_err(|error| {
++        NaoqiRobotError::Connection(format!(
++            "the NAOqi service {name} is not available: {error}"
++        ))
++    })
++}
++
++impl NaoqiHal {
++    /// Connects to the robot described by the configuration and starts driving it.
++    ///
++    /// Validates the configuration, connects to NAOqi, discovers the joints and the
++    /// services, takes a first sample of the sensors and spawns the sampling, event and
++    /// queued-write tasks. Must be called within a Tokio runtime that outlives the HAL.
++    pub async fn new(config: NaoqiRobotConfig) -> Result<Self, NaoqiRobotError> {
++        config.validate()?;
++        let address: qi::Address = config.url.parse().map_err(|error| {
++            NaoqiRobotError::Connection(format!("invalid address {}: {error}", config.url))
++        })?;
++        let credentials = config.password.as_ref().map(|password| {
++            let mut credentials = KeyDynValueMap::new();
++            credentials.set(
++                "auth_user",
++                config.user.clone().unwrap_or_else(|| "nao".to_string()),
++            );
++            credentials.set("auth_token", password.clone());
++            credentials
++        });
++        let node = qi::node::init()
++            .connect_to_space(address, credentials)
++            .start()
++            .await
++            .map_err(|error| {
++                NaoqiRobotError::Connection(format!("cannot connect to {}: {error}", config.url))
++            })?;
++
++        let memory = required_service(&node, "ALMemory").await?;
++        let motion = required_service(&node, "ALMotion").await?;
++        let tts = required_service(&node, "ALTextToSpeech").await?;
++        let leds = match node.service("ALLeds").await {
++            Ok(leds) => Some(leds),
++            Err(error) => {
++                warn!("ALLeds is not available, LED keys are ignored: {error}");
++                None
++            }
++        };
++        let description = describe(&config, &node, &memory).await;
++        let names: Vec<String> = motion
++            .call("getBodyNames", "Body".to_string())
++            .await
++            .map_err(|error| {
++                NaoqiRobotError::Connection(format!("cannot list the joints: {error}"))
++            })?;
++        let joints = JointTable::new(names, &config.joint_ids);
++        info!(
++            "Connected to NAOqi at {} ({:?}, {} joints)",
++            config.url,
++            description
++                .model_family
++                .as_deref()
++                .unwrap_or("unknown robot"),
++            joints.len()
++        );
++
++        let inner = Arc::new(Inner {
++            config,
++            _node: node,
++            memory,
++            motion,
++            tts,
++            leds,
++            joints,
++            description,
++            current_state: Mutex::new(State::new()),
++            subscribers: Mutex::new(Vec::new()),
++            base_velocity: Mutex::new([0.0; 3]),
++        });
++
++        // A first sample, so that the first `updates()` subscribers get a snapshot.
++        let mut sampling = Sampling::default();
++        if let Err(error) = inner.sample_sensors(&mut sampling).await {
++            warn!("Initial sensor sampling failed: {error}");
++        }
++
++        let mut tasks = Vec::new();
++        // The sensor sampling task.
++        let period = Duration::from_millis(inner.config.sensor_period_ms);
++        let sampler = Arc::clone(&inner);
++        tasks.push(
++            tokio::spawn(async move {
++                let mut interval = tokio::time::interval(period);
++                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
++                loop {
++                    interval.tick().await;
++                    if let Err(error) = sampler.sample_sensors(&mut sampling).await {
++                        warn!("Sensor sampling failed: {error}");
++                    }
++                }
++            })
++            .abort_handle(),
++        );
++        // The touch event tasks.
++        if inner.config.sensors.touch {
++            for (event, key) in keys::TOUCH_EVENTS {
++                let watcher = Arc::clone(&inner);
++                tasks.push(tokio::spawn(watcher.watch_event(event, key)).abort_handle());
++            }
++        }
++        // The queued-write task: receives the changes `try_send` enqueues, folds any backlog
++        // into one change (per-key newest wins) so slow round-trips coalesce, and drives the
++        // same write path as `write()`. It ends when the channel closes, i.e. when the HAL is
++        // dropped.
++        let (outbound, mut outbound_rx) = futures::channel::mpsc::unbounded::<StateChange>();
++        let writer = Arc::clone(&inner);
++        tokio::spawn(async move {
++            while let Some(mut changes) = outbound_rx.next().await {
++                while let Ok(later) = outbound_rx.try_recv() {
++                    fold_newest_wins(&mut changes, later);
++                }
++                if let Err(error) = writer.write(changes).await {
++                    warn!("Queued write failed: {error}");
++                }
++            }
++        });
++
++        Ok(Self {
++            inner,
++            outbound,
++            tasks,
++        })
++    }
++}
++
++/// The HAL description, from the configuration or queried from the robot.
++async fn describe(config: &NaoqiRobotConfig, node: &Node, memory: &AnyObject) -> HalDescription {
++    let model_family = match &config.model_family {
++        Some(family) => Some(family.clone()),
++        None => match node.service("ALRobotModel").await {
++            Ok(model) => model
++                .call::<String, _, _>("getRobotType", ())
++                .await
++                .ok()
++                .map(|robot_type| robot_type.to_lowercase()),
++            Err(_) => None,
++        },
++    };
++    let software_version = match &config.software_version {
++        Some(version) => Some(version.clone()),
++        None => match node.service("ALSystem").await {
++            Ok(system) => system.call::<String, _, _>("systemVersion", ()).await.ok(),
++            Err(_) => None,
++        },
++    };
++    let hardware_version = match &config.hardware_version {
++        Some(version) => Some(version.clone()),
++        None => memory
++            .call::<String, _, _>("getData", "RobotConfig/Body/BaseVersion".to_string())
++            .await
++            .ok(),
++    };
++    HalDescription {
++        model_family,
++        hardware_version,
++        software_version,
++    }
++}
++
++impl Inner {
++    /// The `ALMemory` keys sampled periodically, with the Arora keys they feed.
++    fn sampled_memory_keys(&self) -> Vec<(String, String)> {
++        let mut keys = Vec::new();
++        if self.config.sensors.joints {
++            keys.extend(self.joints.memory_keys());
++        }
++        let fixed = [
++            (self.config.sensors.battery, keys::BATTERY_MEMORY_KEYS),
++            (self.config.sensors.inertial, keys::INERTIAL_MEMORY_KEYS),
++            (self.config.sensors.sonar, keys::SONAR_MEMORY_KEYS),
++        ];
++        for (enabled, table) in fixed {
++            if enabled {
++                keys.extend(
++                    table
++                        .iter()
++                        .map(|(memory, arora)| (memory.to_string(), arora.to_string())),
++                );
++            }
++        }
++        keys
++    }
++
++    /// Samples the sensors in one `ALMemory.getListData` call and publishes what changed.
++    async fn sample_sensors(&self, sampling: &mut Sampling) -> Result<(), NaoqiRobotError> {
++        let keys = self.sampled_memory_keys();
++        if keys.is_empty() {
++            return Ok(());
++        }
++        let names: Vec<String> = keys.iter().map(|(memory, _)| memory.clone()).collect();
++        let Dynamic(values) = self
++            .memory
++            .call::<Dynamic<QiValue<'static>>, _, _>("getListData", names)
++            .await?;
++        let values = qi_list(values).ok_or_else(|| {
++            NaoqiRobotError::Conversion("ALMemory.getListData did not return a list".to_string())
++        })?;
++        if values.len() != keys.len() {
++            return Err(NaoqiRobotError::Conversion(format!(
++                "ALMemory.getListData returned {} values for {} keys",
++                values.len(),
++                keys.len()
++            )));
++        }
++
++        let now = Instant::now();
++        let mut change = StateChange::new();
++        let mut positions = Vec::new();
++        for ((_, arora_key), value) in keys.iter().zip(values) {
++            // Keys the robot does not have come back as invalid values: skip them.
++            let Some(number) = qi_f64(&value) else {
++                continue;
++            };
++            let key = Key::from(arora_key.as_str());
++            if key.get_component() == Some(keys::POSITION) {
++                positions.push((key.get_entity().to_string(), number));
++            }
++            if arora_key == keys::BATTERY_CURRENT {
++                change.set.insert(
++                    Key::from(keys::BATTERY_CHARGING),
++                    Some(Value::Boolean(number > 0.0)),
++                );
++            }
++            change.set.insert(key, Some(Value::F64(number)));
++        }
++        // Joint velocities are derived from consecutive position samples.
++        if let Some((previous_time, previous_positions)) = &sampling.previous_positions {
++            let elapsed = now.duration_since(*previous_time).as_secs_f64();
++            if elapsed > 0.0 {
++                for (joint, position) in &positions {
++                    if let Some((_, previous)) = previous_positions
++                        .iter()
++                        .find(|(previous_joint, _)| previous_joint == joint)
++                    {
++                        change.set.insert(
++                            Key::from(format!("{joint}.{}", keys::VELOCITY)),
++                            Some(Value::F64((position - previous) / elapsed)),
++                        );
++                    }
++                }
++            }
++        }
++        sampling.previous_positions = Some((now, positions));
++        self.publish(change);
++        Ok(())
++    }
++
++    /// Drives a boolean key from an `ALMemory` event: its current value, then every raise.
++    async fn watch_event(self: Arc<Self>, event: &'static str, key: &'static str) {
++        if let Ok(Dynamic(value)) = self
++            .memory
++            .call::<Dynamic<QiValue<'static>>, _, _>("getData", event.to_string())
++            .await
++        {
++            if let Some(number) = qi_f64(&value) {
++                self.publish(StateChange::set(key, Value::Boolean(number != 0.0)));
++            }
++        }
++        let subscriber: AnyObject = match self.memory.call("subscriber", event.to_string()).await {
++            Ok(subscriber) => subscriber,
++            Err(error) => {
++                warn!("Cannot subscribe to the {event} event, {key} is not driven: {error}");
++                return;
++            }
++        };
++        let mut raises = match subscriber
++            .subscribe::<_, Dynamic<QiValue<'static>>>("signal")
++            .await
++        {
++            Ok(raises) => raises,
++            Err(error) => {
++                warn!("Cannot subscribe to the {event} event, {key} is not driven: {error}");
++                return;
++            }
++        };
++        while let Some(Dynamic(value)) = raises.next().await {
++            if let Some(number) = qi_f64(&value) {
++                self.publish(StateChange::set(key, Value::Boolean(number != 0.0)));
++            }
++        }
++        debug!("The {event} event stream ended");
++    }
++
++    /// Applies a change to the current state and notifies subscribers of what actually
++    /// changed.
++    fn publish(&self, change: StateChange) {
++        let mut delta = StateChange::new();
++        {
++            let mut state = lock(&self.current_state);
++            for (key, value) in change.set {
++                if state.get(&key) != Some(&value) {
++                    state.set(key.clone(), value.clone());
++                    delta.set.insert(key, value);
++                }
++            }
++            for key in change.unset {
++                if state.get(&key).is_some() {
++                    state.unset(&key);
++                    delta.unset.insert(key);
++                }
++            }
++        }
++        if delta.is_empty() {
++            return;
++        }
++        lock(&self.subscribers).retain(|tx| tx.unbounded_send(delta.clone()).is_ok());
++    }
++
++    /// Turns a change into NAOqi commands. Returns `Ok` when every command succeeded, or when
++    /// there was nothing to command (partial failures are logged), and `Err` when every
++    /// command failed.
++    async fn write(self: &Arc<Self>, changes: StateChange) -> Result<(), NaoqiRobotError> {
++        let mut joint_targets: Vec<(String, f32)> = Vec::new();
++        let mut stiffness_targets: Vec<(String, f32)> = Vec::new();
++        let mut text = None;
++        let mut led_colors: Vec<(String, i32)> = Vec::new();
++        let mut led_intensities: Vec<(String, f32)> = Vec::new();
++        let mut base_velocity = None;
++
++        for (key, value) in &changes.set {
++            let Some(value) = value else {
++                continue;
++            };
++            let entity = key.get_entity();
++            let attributes = key.get_attributes();
++            match (entity, attributes.as_slice()) {
++                (keys::TEXT, []) => match value {
++                    Value::String(sentence) => text = Some(sentence.clone()),
++                    other => warn!("Ignoring a non-string text: {other}"),
++                },
++                (joint, [keys::TARGET_POSITION]) => {
++                    if let Some(name) = self.joints.naoqi_name(joint) {
++                        match arora_f64(value) {
++                            Some(angle) => joint_targets.push((name.to_string(), angle as f32)),
++                            None => warn!("Ignoring a non-numeric target position for {joint}"),
++                        }
++                    }
++                }
++                (joint, [keys::TARGET_STIFFNESS]) => {
++                    if let Some(name) = self.joints.naoqi_name(joint) {
++                        match arora_f64(value) {
++                            Some(stiffness) => {
++                                stiffness_targets.push((name.to_string(), stiffness as f32))
++                            }
++                            None => warn!("Ignoring a non-numeric target stiffness for {joint}"),
++                        }
++                    }
++                }
++                (keys::LED_ENTITY, [group, "color"]) => match arora_f64(value) {
++                    Some(rgb) => led_colors.push((group.to_string(), rgb as i32)),
++                    None => warn!("Ignoring a non-numeric color for the {group} LEDs"),
++                },
++                (keys::LED_ENTITY, [group, "intensity"]) => match arora_f64(value) {
++                    Some(intensity) => led_intensities.push((group.to_string(), intensity as f32)),
++                    None => warn!("Ignoring a non-numeric intensity for the {group} LEDs"),
++                },
++                ("velocity", ["x"]) | ("velocity", ["y"]) | ("rotation", ["z"]) => {
++                    if let Some(component) = arora_f64(value) {
++                        let mut velocity = lock(&self.base_velocity);
++                        let index = match (entity, attributes[0]) {
++                            ("velocity", "x") => 0,
++                            ("velocity", "y") => 1,
++                            _ => 2,
++                        };
++                        velocity[index] = component;
++                        base_velocity = Some(*velocity);
++                    }
++                }
++                _ => {}
++            }
++        }
++
++        // Cache every written key, so that reads reflect the commands sent.
++        {
++            let mut state = lock(&self.current_state);
++            for (key, value) in &changes.set {
++                state.set(key.clone(), value.clone());
++            }
++            for key in &changes.unset {
++                state.unset(key);
++            }
++        }
++
++        let mut attempted = 0;
++        let mut failures = Vec::new();
++        if !joint_targets.is_empty() {
++            attempted += 1;
++            let (names, angles): (Vec<String>, Vec<f32>) = joint_targets.into_iter().unzip();
++            let speed = self.config.joint_speed_fraction as f32;
++            if let Err(error) = self
++                .motion
++                .call::<(), _, _>("setAngles", (names, angles, speed))
++                .await
++            {
++                failures.push(format!("ALMotion.setAngles: {error}"));
++            }
++        }
++        if !stiffness_targets.is_empty() {
++            attempted += 1;
++            let (names, values): (Vec<String>, Vec<f32>) = stiffness_targets.into_iter().unzip();
++            if let Err(error) = self
++                .motion
++                .call::<(), _, _>("setStiffnesses", (names, values))
++                .await
++            {
++                failures.push(format!("ALMotion.setStiffnesses: {error}"));
++            }
++        }
++        if let Some(sentence) = text {
++            // Saying blocks until the sentence is spoken: it runs on its own, and the key is
++            // unset once spoken so that the same sentence can be said again.
++            let inner = Arc::clone(self);
++            tokio::spawn(async move {
++                match inner.tts.call::<(), _, _>("say", sentence).await {
++                    Ok(()) => {
++                        let mut change = StateChange::new();
++                        change.unset.insert(Key::from(keys::TEXT));
++                        inner.publish(change);
++                    }
++                    Err(error) => warn!("ALTextToSpeech.say failed: {error}"),
++                }
++            });
++        }
++        if let Some(leds) = &self.leds {
++            for (group, rgb) in led_colors {
++                attempted += 1;
++                if let Err(error) = leds
++                    .call::<(), _, _>("fadeRGB", (group.clone(), rgb, 0.0f32))
++                    .await
++                {
++                    failures.push(format!("ALLeds.fadeRGB({group}): {error}"));
++                }
++            }
++            for (group, intensity) in led_intensities {
++                attempted += 1;
++                if let Err(error) = leds
++                    .call::<(), _, _>("setIntensity", (group.clone(), intensity))
++                    .await
++                {
++                    failures.push(format!("ALLeds.setIntensity({group}): {error}"));
++                }
++            }
++        }
++        if let Some([x, y, theta]) = base_velocity {
++            attempted += 1;
++            if let Err(error) = self
++                .motion
++                .call::<(), _, _>("moveToward", (x as f32, y as f32, theta as f32))
++                .await
++            {
++                failures.push(format!("ALMotion.moveToward: {error}"));
++            }
++        }
++
++        if attempted > 0 && failures.len() == attempted {
++            return Err(NaoqiRobotError::Write(failures.join("; ")));
++        }
++        for failure in failures {
++            warn!("Partial write failure: {failure}");
++        }
++        Ok(())
++    }
++}
++
++#[async_trait]
++impl Hal for NaoqiHal {
++    async fn describe(&self) -> HalDescription {
++        self.inner.description.clone()
++    }
++
++    async fn read(&self, keys: &[Key]) -> HalResult<Vec<Option<Value>>> {
++        let state = lock(&self.inner.current_state);
++        Ok(keys
++            .iter()
++            .map(|key| state.get(key).cloned().flatten())
++            .collect())
++    }
++
++    async fn read_all(&self) -> HalResult<State> {
++        Ok(lock(&self.inner.current_state).clone())
++    }
++
++    async fn write(&self, changes: StateChange) -> HalResult<()> {
++        self.inner.write(changes).await.map_err(Into::into)
++    }
++
++    /// Hands the change to the queued-write task; never blocks.
++    fn try_send(&self, changes: &StateChange) {
++        if self.outbound.unbounded_send(changes.clone()).is_err() {
++            warn!("Dropping a state change: the queued-write task is gone");
++        }
++    }
++
++    /// A feed of the changes the robot reports. Each feed first receives the current state
++    /// as one `StateChange` (when non-empty), then every subsequent change.
++    fn updates(&self) -> UpdatesStream {
++        let (tx, rx) = futures::channel::mpsc::unbounded();
++        let snapshot = lock(&self.inner.current_state).clone();
++        if !snapshot.is_empty() {
++            let _ = tx.unbounded_send(StateChange {
++                set: snapshot.storage,
++                unset: Default::default(),
++            });
++        }
++        lock(&self.inner.subscribers).push(tx);
++        Box::pin(rx)
++    }
++}
++
++impl Drop for NaoqiHal {
++    fn drop(&mut self) {
++        for task in &self.tasks {
++            task.abort();
++        }
++    }
++}
+diff --git a/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs b/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs
+new file mode 100644
+index 00000000..5a707877
+--- /dev/null
++++ b/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs
+@@ -0,0 +1,343 @@
++//! A minimal fake NAOqi for the tests: the services and members the HAL uses, hosted
++//! in-process with `qi`, with hooks to inspect the commands received and to drive sensors.
++
++use std::collections::HashMap;
++use std::sync::{Arc, Mutex};
++
++use qi::dynamic::ObjectBuilder;
++use qi::node::Node;
++use qi::service_directory::LocalServiceDirectory;
++use qi::value::{Dynamic, Value};
++use qi::{AnyObject, Error, Signal};
++
++type Memory = Arc<Mutex<HashMap<String, Value<'static>>>>;
++type EventSignals = Arc<Mutex<HashMap<String, Signal<Dynamic<Value<'static>>>>>>;
++/// The `setAngles` commands received: names, angles and speed fraction.
++pub type AngleCommands = Arc<Mutex<Vec<(Vec<String>, Vec<f32>, f32)>>>;
++/// The `setStiffnesses` commands received: names and stiffnesses.
++pub type StiffnessCommands = Arc<Mutex<Vec<(Vec<String>, Vec<f32>)>>>;
++
++pub const JOINTS: [&str; 3] = ["HeadYaw", "HeadPitch", "LShoulderPitch"];
++
++pub struct FakeNaoqi {
++    /// The node hosting the fake robot; the services live as long as it does.
++    _node: Node<LocalServiceDirectory>,
++    pub url: String,
++    memory: Memory,
++    events: EventSignals,
++    pub said: Arc<Mutex<Vec<String>>>,
++    pub set_angles: AngleCommands,
++    pub set_stiffnesses: StiffnessCommands,
++    pub leds: Arc<Mutex<Vec<(String, i32, f32)>>>,
++    pub move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
++}
++
++fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
++    mutex
++        .lock()
++        .unwrap_or_else(|poisoned| poisoned.into_inner())
++}
++
++fn initial_memory() -> HashMap<String, Value<'static>> {
++    let mut memory = HashMap::new();
++    let mut set = |key: &str, value: Value<'static>| {
++        memory.insert(key.to_string(), value);
++    };
++    set("RobotConfig/Body/Type", Value::String("Nao".into()));
++    set("RobotConfig/Body/BaseVersion", Value::String("V6".into()));
++    for (index, joint) in JOINTS.iter().enumerate() {
++        set(
++            &format!("Device/SubDeviceList/{joint}/Position/Sensor/Value"),
++            Value::Float32((0.1 * index as f32).into()),
++        );
++        set(
++            &format!("Device/SubDeviceList/{joint}/Hardness/Actuator/Value"),
++            Value::Float32(0.8.into()),
++        );
++        set(
++            &format!("Device/SubDeviceList/{joint}/Temperature/Sensor/Value"),
++            Value::Float32(30.0.into()),
++        );
++        set(
++            &format!("Device/SubDeviceList/{joint}/ElectricCurrent/Sensor/Value"),
++            Value::Float32(0.05.into()),
++        );
++    }
++    set(
++        "Device/SubDeviceList/Battery/Charge/Sensor/Value",
++        Value::Float32(0.75.into()),
++    );
++    set(
++        "Device/SubDeviceList/Battery/Current/Sensor/Value",
++        Value::Float32((-0.5).into()),
++    );
++    set(
++        "Device/SubDeviceList/InertialSensor/AngleX/Sensor/Value",
++        Value::Float32(0.01.into()),
++    );
++    set(
++        "Device/SubDeviceList/US/Left/Sensor/Value",
++        Value::Float32(1.5.into()),
++    );
++    // Touch events are memory keys too.
++    set("FrontTactilTouched", Value::Float32(0.0.into()));
++    memory
++}
++
++impl FakeNaoqi {
++    /// Hosts the fake NAOqi on a loopback port.
++    pub async fn start() -> Self {
++        let memory: Memory = Arc::new(Mutex::new(initial_memory()));
++        let events: EventSignals = Arc::default();
++        let said = Arc::new(Mutex::new(Vec::new()));
++        let set_angles = Arc::new(Mutex::new(Vec::new()));
++        let set_stiffnesses = Arc::new(Mutex::new(Vec::new()));
++        let leds = Arc::new(Mutex::new(Vec::new()));
++        let move_toward = Arc::new(Mutex::new(Vec::new()));
++
++        let mut init = qi::node::init();
++        init.add_service_object("ALMemory", almemory(memory.clone(), events.clone()));
++        init.add_service_object(
++            "ALMotion",
++            almotion(
++                memory.clone(),
++                set_angles.clone(),
++                set_stiffnesses.clone(),
++                move_toward.clone(),
++            ),
++        );
++        init.add_service_object("ALTextToSpeech", altexttospeech(said.clone()));
++        init.add_service_object("ALLeds", alleds(leds.clone()));
++        init.add_service_object("ALSystem", alsystem());
++        init.add_service_object("ALRobotModel", alrobotmodel());
++        init.bind("tcp://127.0.0.1:0".parse().unwrap());
++        let node = init
++            .host_space()
++            .start()
++            .await
++            .expect("host the fake NAOqi");
++        let url = node
++            .endpoints()
++            .iter()
++            .find_map(|endpoint| {
++                let endpoint = endpoint.to_string();
++                endpoint.starts_with("tcp://").then_some(endpoint)
++            })
++            .expect("a TCP endpoint");
++        Self {
++            _node: node,
++            url,
++            memory,
++            events,
++            said,
++            set_angles,
++            set_stiffnesses,
++            leds,
++            move_toward,
++        }
++    }
++
++    /// Sets a memory key to a number, as a sensor would.
++    pub fn set_memory(&self, key: &str, value: f32) {
++        lock(&self.memory).insert(key.to_string(), Value::Float32(value.into()));
++    }
++
++    /// Raises an event: sets its memory key and notifies its subscribers.
++    pub fn raise_event(&self, key: &str, value: f32) {
++        self.set_memory(key, value);
++        if let Some(signal) = lock(&self.events).get(key) {
++            signal.emit(Dynamic(Value::Float32(value.into())));
++        }
++    }
++}
++
++fn almemory(memory: Memory, events: EventSignals) -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    let get_memory = memory.clone();
++    builder.add_method("getData", move |key: String| {
++        let memory = get_memory.clone();
++        async move {
++            lock(&memory)
++                .get(&key)
++                .cloned()
++                .map(Dynamic)
++                .ok_or_else(|| Error::Other(format!("ALMemory::getData: {key} not found").into()))
++        }
++    });
++    let list_memory = memory.clone();
++    builder.add_method("getListData", move |keys: Dynamic<Value<'static>>| {
++        let memory = list_memory.clone();
++        async move {
++            let Value::List(keys) = keys.0 else {
++                return Err(Error::Other("getListData expects a list".into()));
++            };
++            let memory = lock(&memory);
++            // An ALValue array: every element is itself an ALValue (a dynamic value).
++            let values = keys
++                .into_iter()
++                .map(|key| match key {
++                    Value::String(key) => memory
++                        .get(&key.to_string())
++                        .cloned()
++                        // Unknown keys are invalid values, as in NAOqi.
++                        .unwrap_or(Value::Unit),
++                    _ => Value::Unit,
++                })
++                .map(Value::into_dynamic)
++                .collect();
++            Ok(Dynamic(Value::List(values)))
++        }
++    });
++    let insert_memory = memory.clone();
++    let insert_events = events.clone();
++    let insert = move |(key, value): (String, Dynamic<Value<'static>>)| {
++        let memory = insert_memory.clone();
++        let events = insert_events.clone();
++        async move {
++            lock(&memory).insert(key.clone(), value.0.clone());
++            if let Some(signal) = lock(&events).get(&key) {
++                signal.emit(value);
++            }
++            Ok(())
++        }
++    };
++    builder.add_method("insertData", insert.clone());
++    builder.add_method("raiseEvent", insert);
++    builder.add_method("subscriber", move |key: String| {
++        let events = events.clone();
++        async move {
++            let signal = lock(&events).entry(key).or_default().clone();
++            let mut subscriber = ObjectBuilder::new();
++            subscriber.add_signal("signal", signal);
++            Ok(AnyObject::new(subscriber.build()))
++        }
++    });
++    AnyObject::new(builder.build())
++}
++
++fn almotion(
++    memory: Memory,
++    set_angles: AngleCommands,
++    set_stiffnesses: StiffnessCommands,
++    move_toward: Arc<Mutex<Vec<(f32, f32, f32)>>>,
++) -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    builder.add_method("getBodyNames", |_chain: String| async move {
++        Ok(JOINTS
++            .iter()
++            .map(|joint| joint.to_string())
++            .collect::<Vec<_>>())
++    });
++    let angles_memory = memory.clone();
++    builder.add_method(
++        "getAngles",
++        move |(names, _sensors): (Dynamic<Value<'static>>, bool)| {
++            let memory = angles_memory.clone();
++            async move {
++                let names = match names.0 {
++                    Value::List(names) => names,
++                    single => vec![single],
++                };
++                let memory = lock(&memory);
++                Ok(names
++                    .iter()
++                    .map(|name| {
++                        match memory.get(&format!(
++                            "Device/SubDeviceList/{name}/Position/Sensor/Value"
++                        )) {
++                            Some(Value::Float32(value)) => value.0,
++                            _ => 0.0,
++                        }
++                    })
++                    .collect::<Vec<f32>>())
++            }
++        },
++    );
++    builder.add_method(
++        "setAngles",
++        move |(names, angles, speed): (Dynamic<Vec<String>>, Dynamic<Vec<f32>>, f32)| {
++            let memory = memory.clone();
++            let set_angles = set_angles.clone();
++            async move {
++                // The fake reaches its targets instantly.
++                let mut memory = lock(&memory);
++                for (name, angle) in names.0.iter().zip(&angles.0) {
++                    memory.insert(
++                        format!("Device/SubDeviceList/{name}/Position/Sensor/Value"),
++                        Value::Float32((*angle).into()),
++                    );
++                }
++                lock(&set_angles).push((names.0, angles.0, speed));
++                Ok(())
++            }
++        },
++    );
++    builder.add_method(
++        "setStiffnesses",
++        move |(names, values): (Dynamic<Vec<String>>, Dynamic<Vec<f32>>)| {
++            let set_stiffnesses = set_stiffnesses.clone();
++            async move {
++                lock(&set_stiffnesses).push((names.0, values.0));
++                Ok(())
++            }
++        },
++    );
++    builder.add_method("moveToward", move |(x, y, theta): (f32, f32, f32)| {
++        let move_toward = move_toward.clone();
++        async move {
++            lock(&move_toward).push((x, y, theta));
++            Ok(())
++        }
++    });
++    AnyObject::new(builder.build())
++}
++
++fn altexttospeech(said: Arc<Mutex<Vec<String>>>) -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    builder.add_method("say", move |text: String| {
++        let said = said.clone();
++        async move {
++            // Speaking takes time.
++            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++            lock(&said).push(text);
++            Ok(())
++        }
++    });
++    AnyObject::new(builder.build())
++}
++
++fn alleds(leds: Arc<Mutex<Vec<(String, i32, f32)>>>) -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    builder.add_method(
++        "fadeRGB",
++        move |(group, rgb, duration): (String, i32, f32)| {
++            let leds = leds.clone();
++            async move {
++                lock(&leds).push((group, rgb, duration));
++                Ok(())
++            }
++        },
++    );
++    builder.add_method(
++        "setIntensity",
++        |(_group, _intensity): (String, f32)| async move { Ok(()) },
++    );
++    AnyObject::new(builder.build())
++}
++
++fn alsystem() -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    builder.add_method("systemVersion", |(): ()| async move {
++        Ok("2.8.7.4".to_string())
++    });
++    AnyObject::new(builder.build())
++}
++
++fn alrobotmodel() -> AnyObject {
++    let mut builder = ObjectBuilder::new();
++    builder.add_method(
++        "getRobotType",
++        |(): ()| async move { Ok("Nao".to_string()) },
++    );
++    AnyObject::new(builder.build())
++}
+diff --git a/crates/arora-hal-naoqi/tests/hal.rs b/crates/arora-hal-naoqi/tests/hal.rs
+new file mode 100644
+index 00000000..271d9731
+--- /dev/null
++++ b/crates/arora-hal-naoqi/tests/hal.rs
+@@ -0,0 +1,271 @@
++//! The NAOqi HAL against an in-process fake NAOqi.
++
++mod fake_naoqi;
++
++use std::time::Duration;
++
++use arora_hal::{Hal, UpdatesStream};
++use arora_hal_naoqi::{keys, NaoqiHal, NaoqiRobotConfig};
++use arora_types::data::{Key, StateChange};
++use arora_types::value::Value;
++use fake_naoqi::FakeNaoqi;
++use futures::StreamExt;
++use tokio::time::timeout;
++
++const TIMEOUT: Duration = Duration::from_secs(5);
++
++async fn start() -> (FakeNaoqi, NaoqiHal) {
++    let robot = FakeNaoqi::start().await;
++    let mut config = NaoqiRobotConfig::with_url(&robot.url);
++    config.sensor_period_ms = 10;
++    let hal = NaoqiHal::new(config).await.expect("connect the HAL");
++    (robot, hal)
++}
++
++/// Waits for an update satisfying the predicate, returning the value of the key in it.
++async fn wait_for(
++    feed: &mut UpdatesStream,
++    key: &str,
++    predicate: impl Fn(&Option<Value>) -> bool,
++) -> Option<Value> {
++    let key = Key::from(key);
++    timeout(TIMEOUT, async {
++        while let Some(change) = feed.next().await {
++            if let Some(value) = change.set.get(&key) {
++                if predicate(value) {
++                    return value.clone();
++                }
++            }
++        }
++        panic!("the updates feed ended");
++    })
++    .await
++    .unwrap_or_else(|_| panic!("no update of {key:?} matched in time"))
++}
++
++/// Waits for an update satisfying the predicate and returns it.
++async fn wait_for_change(
++    feed: &mut UpdatesStream,
++    predicate: impl Fn(&StateChange) -> bool,
++) -> StateChange {
++    timeout(TIMEOUT, async {
++        while let Some(change) = feed.next().await {
++            if predicate(&change) {
++                return change;
++            }
++        }
++        panic!("the updates feed ended");
++    })
++    .await
++    .expect("no update matched in time")
++}
++
++async fn wait_for_unset(feed: &mut UpdatesStream, key: &str) {
++    let key = Key::from(key);
++    timeout(TIMEOUT, async {
++        while let Some(change) = feed.next().await {
++            if change.unset.contains(&key) {
++                return;
++            }
++        }
++        panic!("the updates feed ended");
++    })
++    .await
++    .unwrap_or_else(|_| panic!("{key:?} was not unset in time"))
++}
++
++fn f64_of(value: &Option<Value>) -> Option<f64> {
++    match value {
++        Some(Value::F64(v)) => Some(*v),
++        _ => None,
++    }
++}
++
++#[tokio::test]
++async fn describes_the_robot() {
++    let (_robot, hal) = start().await;
++    let description = hal.describe().await;
++    assert_eq!(description.model_family.as_deref(), Some("nao"));
++    assert_eq!(description.software_version.as_deref(), Some("2.8.7.4"));
++    assert_eq!(description.hardware_version.as_deref(), Some("V6"));
++}
++
++#[tokio::test]
++async fn reports_sensors_as_keys() {
++    let (robot, hal) = start().await;
++    let mut feed = hal.updates();
++
++    // The first update is the snapshot of the initial sample.
++    let snapshot = timeout(TIMEOUT, feed.next()).await.unwrap().unwrap();
++    assert_eq!(
++        f64_of(snapshot.set.get(&Key::from("head_pitch.position")).unwrap()),
++        Some(0.1f32 as f64)
++    );
++    assert_eq!(
++        f64_of(
++            snapshot
++                .set
++                .get(&Key::from("l_shoulder_pitch.stiffness"))
++                .unwrap()
++        ),
++        Some(0.8f32 as f64)
++    );
++    assert_eq!(
++        f64_of(snapshot.set.get(&Key::from(keys::BATTERY_CHARGE)).unwrap()),
++        Some(0.75)
++    );
++    assert_eq!(
++        snapshot
++            .set
++            .get(&Key::from(keys::BATTERY_CHARGING))
++            .unwrap(),
++        &Some(Value::Boolean(false))
++    );
++    assert!(snapshot.set.contains_key(&Key::from("imu.angle.x")));
++    assert!(snapshot.set.contains_key(&Key::from("sonar.left.distance")));
++    // Keys the robot does not have are absent, not reported as invalid.
++    assert!(!snapshot
++        .set
++        .contains_key(&Key::from("sonar.right.distance")));
++    // Touch keys start from the current value of their event.
++    wait_for(&mut feed, "touch.head.front", |v| {
++        v == &Some(Value::Boolean(false))
++    })
++    .await;
++
++    // Sensor changes are reported, with velocities derived from consecutive samples.
++    robot.set_memory("Device/SubDeviceList/HeadYaw/Position/Sensor/Value", 0.5);
++    let change = wait_for_change(&mut feed, |change| {
++        change
++            .set
++            .get(&Key::from("head_yaw.position"))
++            .is_some_and(|v| f64_of(v) == Some(0.5))
++    })
++    .await;
++    let velocity = change.set.get(&Key::from("head_yaw.velocity")).unwrap();
++    assert!(f64_of(velocity).unwrap() > 0.0, "{velocity:?}");
++
++    // The cache follows.
++    assert_eq!(
++        hal.read(&[Key::from("head_yaw.position"), Key::from("nope")])
++            .await
++            .unwrap(),
++        vec![Some(Value::F64(0.5)), None]
++    );
++}
++
++#[tokio::test]
++async fn touch_events_drive_boolean_keys() {
++    let (robot, hal) = start().await;
++    let mut feed = hal.updates();
++    // Let the event subscriptions settle.
++    tokio::time::sleep(Duration::from_millis(100)).await;
++    robot.raise_event("FrontTactilTouched", 1.0);
++    let touched = wait_for(&mut feed, "touch.head.front", |v| {
++        v == &Some(Value::Boolean(true))
++    })
++    .await;
++    assert_eq!(touched, Some(Value::Boolean(true)));
++    robot.raise_event("FrontTactilTouched", 0.0);
++    wait_for(&mut feed, "touch.head.front", |v| {
++        v == &Some(Value::Boolean(false))
++    })
++    .await;
++    robot.raise_event("RightBumperPressed", 1.0);
++    wait_for(&mut feed, "bumper.right", |v| {
++        v == &Some(Value::Boolean(true))
++    })
++    .await;
++}
++
++#[tokio::test]
++async fn writes_joint_targets_and_stiffness() {
++    let (robot, hal) = start().await;
++    let mut feed = hal.updates();
++    let mut change = StateChange::set("head_yaw.target_position", Value::F64(0.7));
++    change.set.insert(
++        Key::from("l_shoulder_pitch.target_position"),
++        Some(Value::F32(-0.2)),
++    );
++    change.set.insert(
++        Key::from("head_yaw.target_stiffness"),
++        Some(Value::F64(1.0)),
++    );
++    change
++        .set
++        .insert(Key::from("unknown.target_position"), Some(Value::F64(1.0)));
++    hal.write(change).await.unwrap();
++
++    let mut commands = robot.set_angles.lock().unwrap().clone();
++    assert_eq!(commands.len(), 1);
++    let (mut names, mut angles, speed) = commands.remove(0);
++    let mut pairs: Vec<_> = names.drain(..).zip(angles.drain(..)).collect();
++    pairs.sort_by(|a, b| a.0.cmp(&b.0));
++    assert_eq!(
++        pairs,
++        [
++            ("HeadYaw".to_string(), 0.7f32),
++            ("LShoulderPitch".to_string(), -0.2f32)
++        ]
++    );
++    assert_eq!(speed, 0.3);
++    assert_eq!(
++        robot.set_stiffnesses.lock().unwrap().as_slice(),
++        [(vec!["HeadYaw".to_string()], vec![1.0f32])]
++    );
++    // The commanded position is sensed back through the sampling.
++    wait_for(&mut feed, "head_yaw.position", |v| {
++        f64_of(v) == Some(0.7f32 as f64)
++    })
++    .await;
++    // Written keys are readable.
++    assert_eq!(
++        hal.read(&[Key::from("head_yaw.target_position")])
++            .await
++            .unwrap(),
++        vec![Some(Value::F64(0.7))]
++    );
++}
++
++#[tokio::test]
++async fn try_send_speaks_without_blocking_and_unsets_the_text() {
++    let (robot, hal) = start().await;
++    let mut feed = hal.updates();
++    hal.try_send(&StateChange::set(keys::TEXT, Value::from("hello")));
++    wait_for_unset(&mut feed, keys::TEXT).await;
++    assert_eq!(robot.said.lock().unwrap().as_slice(), ["hello".to_string()]);
++    // The same text can be said again.
++    hal.try_send(&StateChange::set(keys::TEXT, Value::from("hello")));
++    wait_for_unset(&mut feed, keys::TEXT).await;
++    assert_eq!(robot.said.lock().unwrap().len(), 2);
++}
++
++#[tokio::test]
++async fn writes_leds_and_base_velocity() {
++    let (robot, hal) = start().await;
++    let mut change = StateChange::set("led.FaceLeds.color", Value::U32(0x00ff_0000));
++    change
++        .set
++        .insert(Key::from(keys::VELOCITY_X), Some(Value::F64(0.5)));
++    hal.write(change).await.unwrap();
++    hal.write(StateChange::set(keys::ROTATION_Z, Value::F64(-0.25)))
++        .await
++        .unwrap();
++    assert_eq!(
++        robot.leds.lock().unwrap().as_slice(),
++        [("FaceLeds".to_string(), 0x00ff_0000i32, 0.0f32)]
++    );
++    assert_eq!(
++        robot.move_toward.lock().unwrap().as_slice(),
++        [(0.5f32, 0.0, 0.0), (0.5, 0.0, -0.25)]
++    );
++}
++
++#[tokio::test]
++async fn connection_failures_are_reported() {
++    let error = NaoqiHal::new(NaoqiRobotConfig::with_url("tcp://127.0.0.1:1"))
++        .await
++        .err()
++        .expect("no NAOqi listens on port 1");
++    assert!(error.to_string().contains("connection"), "{error}");
++}
+-- 
+2.54.0 (Apple Git-157)
+

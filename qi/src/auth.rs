@@ -1,0 +1,94 @@
+use crate::value::{KeyDynValueMap, Value};
+
+pub trait Authenticator {
+    fn authenticate(&self, parameters: KeyDynValueMap) -> Result<(), Error>;
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct UserTokenAuthenticator {
+    user: String,
+    token: String,
+}
+
+impl UserTokenAuthenticator {
+    pub fn new(user: String, token: String) -> Self {
+        Self { user, token }
+    }
+}
+
+impl Authenticator for UserTokenAuthenticator {
+    fn authenticate(&self, mut parameters: KeyDynValueMap) -> Result<(), Error> {
+        let user: String = parameters
+            .remove(USER_KEY)
+            .ok_or_else(|| Error::UserValue("missing".to_owned()))?
+            .cast_into()
+            .map_err(|err| Error::UserValue(err.to_string()))?;
+        let token: String = parameters
+            .remove(TOKEN_KEY)
+            .ok_or_else(|| Error::TokenValue("missing".to_owned()))?
+            .cast_into()
+            .map_err(|err| Error::TokenValue(err.to_string()))?;
+        (user == self.user && token == self.token)
+            .then_some(())
+            .ok_or_else(|| Error::Refused("invalid user/token credentials".to_owned()))
+    }
+}
+
+pub(super) fn state_done_map(mut capabilities: KeyDynValueMap) -> KeyDynValueMap {
+    capabilities.set(STATE_KEY, STATE_DONE);
+    capabilities
+}
+
+pub(super) fn extract_state_result(capabilities: &mut KeyDynValueMap) -> Result<(), StateError> {
+    let state = capabilities
+        .remove(STATE_KEY)
+        .ok_or(StateError::Missing)?
+        .clone();
+    match state {
+        Value::UInt32(STATE_DONE) => Ok(()),
+        _ => Err(StateError::UnknownValue(state.into_owned())),
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("user value error: {0}")]
+    UserValue(String),
+
+    #[error("token value error: {0}")]
+    TokenValue(String),
+
+    #[error("the authentication attempt must be continued, but authentication continuation is unsupported")]
+    UnsupportedContinue,
+
+    #[error("the authentication attempt was refused, reason is: {0}")]
+    Refused(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StateError {
+    #[error("the state value is missing")]
+    Missing,
+
+    #[error(
+        "expected a \"Done\" state value of \"{done}u32\", found \"{0}\" instead",
+        done = STATE_DONE
+    )]
+    UnknownValue(Value<'static>),
+}
+
+macro_rules! declare_prefixed_key {
+    (qi: $name:ident, $suffix:literal) => {
+        pub(super) const $name: &str = concat!("__qi_auth_", $suffix);
+    };
+    (user: $name:ident, $suffix:literal) => {
+        pub(super) const $name: &str = concat!("auth_", $suffix);
+    };
+}
+
+// declare_prefixed_key!(qi: ERROR_REASON_KEY, "err_reason");
+declare_prefixed_key!(qi: STATE_KEY, "state");
+declare_prefixed_key!(user: USER_KEY, "user");
+declare_prefixed_key!(user: TOKEN_KEY, "token");
+
+pub(super) const STATE_DONE: u32 = 3;

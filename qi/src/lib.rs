@@ -1,6 +1,4 @@
 #![deny(unreachable_pub, unsafe_code)]
-// TODO: #![deny(missing_docs)]
-#![warn(unused_crate_dependencies)]
 #![warn(
     clippy::all,
     clippy::clone_on_ref_ptr,
@@ -13,6 +11,7 @@
     clippy::format_push_string,
     clippy::get_unwrap,
     clippy::if_then_some_else_none,
+    clippy::implicit_clone,
     clippy::integer_division,
     clippy::large_include_file,
     clippy::let_underscore_must_use,
@@ -22,7 +21,6 @@
     clippy::mixed_read_write_in_expression,
     clippy::multiple_inherent_impl,
     clippy::mutex_atomic,
-    clippy::panic,
     clippy::print_stderr,
     clippy::print_stdout,
     clippy::rc_buffer,
@@ -32,7 +30,6 @@
     clippy::mod_module_files,
     clippy::str_to_string,
     clippy::string_slice,
-    clippy::string_to_string,
     clippy::todo,
     clippy::try_err,
     clippy::unimplemented,
@@ -44,7 +41,43 @@
 #![doc(test(attr(deny(warnings))))]
 #![doc = include_str!("../README.md")]
 
-pub use qi_format as format;
-pub use qi_messaging::{self as messaging, session};
-pub use qi_object::{self as object, Node, ServiceDirectory, ServiceInfo, Uri};
-pub use qi_types as types;
+// The procedural macros of `qi-macros` generate `::qi::...` paths: naming this crate `qi` in its
+// own extern prelude lets them, and the modules that use the public API, resolve inside it too.
+extern crate self as qi;
+
+pub mod auth;
+pub mod call;
+pub mod dynamic;
+mod error;
+pub mod format;
+pub mod messaging;
+#[cfg(feature = "naoqi-sim")]
+pub mod naoqi_sim;
+pub mod node;
+pub mod object;
+pub mod property;
+pub mod service;
+pub mod service_directory;
+pub(crate) mod session;
+pub mod signal;
+pub mod value;
+
+#[doc(hidden)]
+#[path = "private.rs"]
+pub mod __private;
+
+pub use self::{
+    dynamic::{DynamicObject, ObjectBuilder},
+    error::{BoxError, Error, FormatError, HandlerError},
+    node::Node,
+    object::{AnyObject, Object, ObjectClient, ObjectExt},
+    property::Property,
+    service_directory::ServiceDirectory,
+    session::{Capabilities, Target},
+    signal::{Signal, Subscription},
+};
+pub use async_trait::async_trait;
+pub use messaging::Address;
+pub use qi_macros::{object, FromValue, IntoValue, Reflect, ToValue, Valuable};
+
+pub type Result<T> = std::result::Result<T, Error>;

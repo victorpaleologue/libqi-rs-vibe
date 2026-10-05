@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 63c217f..a6b11bb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -20,7 +20,7 @@ find_package(tf2_geometry_msgs REQUIRED)
+ find_package(tf2_msgs REQUIRED)
+ find_package(tf2_ros REQUIRED)
+ find_package(OpenCV REQUIRED)
+-find_package(Boost QUIET COMPONENTS chrono filesystem program_options regex system thread random)
++find_package(Boost QUIET COMPONENTS chrono filesystem program_options regex thread random)
+ 
+ set(
+   CONVERTERS_SRC

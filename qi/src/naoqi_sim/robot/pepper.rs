@@ -1,0 +1,295 @@
+//! The Pepper robot (1.8).
+
+use super::{Chain, JointSpec, Posture, RobotDescription, RobotModel};
+
+const fn joint(
+    name: &'static str,
+    chain: Chain,
+    min: f32,
+    max: f32,
+    max_velocity: f32,
+    max_torque: f32,
+    initial: f32,
+) -> JointSpec {
+    JointSpec {
+        name,
+        chain,
+        min,
+        max,
+        max_velocity,
+        max_torque,
+        initial,
+        actuator: true,
+        body: true,
+    }
+}
+
+const fn wheel(name: &'static str) -> JointSpec {
+    JointSpec {
+        name,
+        chain: Chain::Wheels,
+        min: -std::f32::consts::TAU,
+        max: std::f32::consts::TAU,
+        max_velocity: 10.0,
+        max_torque: 5.0,
+        initial: 0.0,
+        actuator: true,
+        body: false,
+    }
+}
+
+/// The joints of Pepper: the `Body` group followed by the wheels.
+pub(super) static JOINTS: [JointSpec; 20] = [
+    joint("HeadYaw", Chain::Head, -2.0857, 2.0857, 7.33998, 1.547, 0.0),
+    joint(
+        "HeadPitch",
+        Chain::Head,
+        -0.7068,
+        0.4451,
+        9.22756,
+        1.532,
+        -0.2,
+    ),
+    joint(
+        "LShoulderPitch",
+        Chain::LArm,
+        -2.0857,
+        2.0857,
+        7.33998,
+        1.547,
+        1.55,
+    ),
+    joint(
+        "LShoulderRoll",
+        Chain::LArm,
+        0.0087,
+        1.5620,
+        9.22756,
+        1.532,
+        0.13,
+    ),
+    joint(
+        "LElbowYaw",
+        Chain::LArm,
+        -2.0857,
+        2.0857,
+        7.33998,
+        1.547,
+        -1.24,
+    ),
+    joint(
+        "LElbowRoll",
+        Chain::LArm,
+        -1.5620,
+        -0.0087,
+        9.22756,
+        1.532,
+        -0.52,
+    ),
+    joint(
+        "LWristYaw",
+        Chain::LArm,
+        -1.8239,
+        1.8239,
+        17.3835,
+        0.4075,
+        0.0,
+    ),
+    joint("LHand", Chain::LArm, 0.02, 0.98, 8.33, 0.292, 0.6),
+    joint("HipRoll", Chain::Leg, -0.5149, 0.5149, 2.27032, 8.0, 0.0),
+    joint("HipPitch", Chain::Leg, -1.0385, 1.0385, 2.93276, 8.0, -0.03),
+    joint("KneePitch", Chain::Leg, -0.5149, 0.5149, 2.27032, 8.0, 0.0),
+    joint(
+        "RShoulderPitch",
+        Chain::RArm,
+        -2.0857,
+        2.0857,
+        7.33998,
+        1.547,
+        1.55,
+    ),
+    joint(
+        "RShoulderRoll",
+        Chain::RArm,
+        -1.5620,
+        -0.0087,
+        9.22756,
+        1.532,
+        -0.13,
+    ),
+    joint(
+        "RElbowYaw",
+        Chain::RArm,
+        -2.0857,
+        2.0857,
+        7.33998,
+        1.547,
+        1.24,
+    ),
+    joint(
+        "RElbowRoll",
+        Chain::RArm,
+        0.0087,
+        1.5620,
+        9.22756,
+        1.532,
+        0.52,
+    ),
+    joint(
+        "RWristYaw",
+        Chain::RArm,
+        -1.8239,
+        1.8239,
+        17.3835,
+        0.4075,
+        0.0,
+    ),
+    joint("RHand", Chain::RArm, 0.02, 0.98, 8.33, 0.292, 0.6),
+    wheel("WheelFL"),
+    wheel("WheelFR"),
+    wheel("WheelB"),
+];
+
+static SENSOR_NAMES: [&str; 12] = [
+    "CameraTop",
+    "CameraBottom",
+    "CameraDepth",
+    "CameraStereo",
+    "InertialSensor",
+    "InertialSensorBase",
+    "Accelerometer",
+    "Gyrometer",
+    "AccelerometerBase",
+    "GyrometerBase",
+    "Sonar",
+    "Laser",
+];
+
+static STAND: [(&str, f32); 17] = [
+    ("HeadYaw", 0.0),
+    ("HeadPitch", -0.2),
+    ("LShoulderPitch", 1.55),
+    ("LShoulderRoll", 0.13),
+    ("LElbowYaw", -1.24),
+    ("LElbowRoll", -0.52),
+    ("LWristYaw", 0.0),
+    ("LHand", 0.6),
+    ("HipRoll", 0.0),
+    ("HipPitch", -0.03),
+    ("KneePitch", 0.0),
+    ("RShoulderPitch", 1.55),
+    ("RShoulderRoll", -0.13),
+    ("RElbowYaw", 1.24),
+    ("RElbowRoll", 0.52),
+    ("RWristYaw", 0.0),
+    ("RHand", 0.6),
+];
+
+static STAND_INIT: [(&str, f32); 17] = [
+    ("HeadYaw", 0.0),
+    ("HeadPitch", -0.21),
+    ("LShoulderPitch", 1.58),
+    ("LShoulderRoll", 0.12),
+    ("LElbowYaw", -1.23),
+    ("LElbowRoll", -0.52),
+    ("LWristYaw", 0.03),
+    ("LHand", 0.6),
+    ("HipRoll", 0.0),
+    ("HipPitch", -0.03),
+    ("KneePitch", 0.0),
+    ("RShoulderPitch", 1.58),
+    ("RShoulderRoll", -0.12),
+    ("RElbowYaw", 1.23),
+    ("RElbowRoll", 0.52),
+    ("RWristYaw", -0.03),
+    ("RHand", 0.6),
+];
+
+static STAND_ZERO: [(&str, f32); 17] = [
+    ("HeadYaw", 0.0),
+    ("HeadPitch", 0.0),
+    ("LShoulderPitch", 0.0),
+    ("LShoulderRoll", 0.0087),
+    ("LElbowYaw", 0.0),
+    ("LElbowRoll", -0.0087),
+    ("LWristYaw", 0.0),
+    ("LHand", 0.02),
+    ("HipRoll", 0.0),
+    ("HipPitch", 0.0),
+    ("KneePitch", 0.0),
+    ("RShoulderPitch", 0.0),
+    ("RShoulderRoll", -0.0087),
+    ("RElbowYaw", 0.0),
+    ("RElbowRoll", 0.0087),
+    ("RWristYaw", 0.0),
+    ("RHand", 0.02),
+];
+
+static CROUCH: [(&str, f32); 17] = [
+    ("HeadYaw", 0.0),
+    ("HeadPitch", 0.0),
+    ("LShoulderPitch", 1.5),
+    ("LShoulderRoll", 0.1),
+    ("LElbowYaw", -1.2),
+    ("LElbowRoll", -0.5),
+    ("LWristYaw", 0.0),
+    ("LHand", 0.6),
+    ("HipRoll", 0.0),
+    ("HipPitch", -1.0),
+    ("KneePitch", 0.5),
+    ("RShoulderPitch", 1.5),
+    ("RShoulderRoll", -0.1),
+    ("RElbowYaw", 1.2),
+    ("RElbowRoll", 0.5),
+    ("RWristYaw", 0.0),
+    ("RHand", 0.6),
+];
+
+static POSTURES: [Posture; 4] = [
+    Posture {
+        name: "Stand",
+        angles: &STAND,
+    },
+    Posture {
+        name: "StandInit",
+        angles: &STAND_INIT,
+    },
+    Posture {
+        name: "StandZero",
+        angles: &STAND_ZERO,
+    },
+    Posture {
+        name: "Crouch",
+        angles: &CROUCH,
+    },
+];
+
+static LED_GROUPS: [&str; 12] = [
+    "AllLeds",
+    "BrainLeds",
+    "ChestLeds",
+    "EarLeds",
+    "FaceLeds",
+    "LeftEarLeds",
+    "LeftFaceLeds",
+    "LeftShoulderLeds",
+    "RightEarLeds",
+    "RightFaceLeds",
+    "RightShoulderLeds",
+    "ShoulderLeds",
+];
+
+/// The description of Pepper.
+pub(super) static DESCRIPTION: RobotDescription = RobotDescription {
+    model: RobotModel::Pepper,
+    joints: &JOINTS,
+    sensor_names: &SENSOR_NAMES,
+    postures: &POSTURES,
+    posture_family: "Standing",
+    torso_height: 0.82,
+    max_velocity: [0.55, 0.55, 2.0],
+    led_groups: &LED_GROUPS,
+    cameras: &[0, 1, 2, 3],
+    has_legs: false,
+    has_laser: true,
+};
