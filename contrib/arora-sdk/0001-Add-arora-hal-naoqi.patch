@@ -1,23 +1,30 @@
-From c3a62649f8b437366924010e2899831e9dbb3890 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
-Date: Tue, 29 Sep 2026 17:30:13 +0000
-Subject: [PATCH] Add arora-hal-naoqi: NAO and Pepper as Arora devices over
- libqi-rs
+From 26856a67b564d2824b19492361defeae0a412497 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Victor=20Pal=C3=A9ologue?= <victor.paleologue@semio.ai>
+Date: Mon, 5 Oct 2026 15:21:50 +0200
+Subject: [PATCH] feat(arora-hal-naoqi): NAO and Pepper as Arora devices over
+ libqi-rs-vibe
 
 A NAOqi HAL in pure Rust: it connects to a robot's NAOqi through the `qi`
-crate of libqi-rs (no C++ SDK, no cross-compilation) and exposes joints,
-battery, inertial unit, sonars and touch sensors as keys, and drives joint
-targets, stiffness, speech, LEDs and the base velocity through ALMotion,
-ALTextToSpeech and ALLeds. Tested against an in-process fake NAOqi built
-with the same crate.
+crate of libqi-rs-vibe (no C++ SDK, no cross-compilation) and exposes
+joints, battery, inertial unit, sonars and touch sensors as keys, and
+drives joint targets, stiffness, speech, LEDs and the base velocity
+through ALMotion, ALTextToSpeech and ALLeds. Tested against an
+in-process fake NAOqi built with the same crate, and with a probe
+example against naoqi-sim.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01RzWNCNTKysjou8kURpK8Th
+libqi-rs-vibe is not on crates.io yet, so the dependency is pinned to a
+commit of its repository.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DMrzqz1MW6FDjHrkpvUA5s
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01DMrzqz1MW6FDjHrkpvUA5s
 ---
- Cargo.lock                                    | 377 ++++++++++-
- Cargo.toml                                    |   7 +
+ Cargo.lock                                    | 337 +++++++++-
+ Cargo.toml                                    |   2 +
  crates/arora-hal-naoqi/CHANGELOG.md           |  19 +
- crates/arora-hal-naoqi/Cargo.toml             |  39 ++
+ crates/arora-hal-naoqi/Cargo.toml             |  41 ++
  crates/arora-hal-naoqi/configs/nao.json       |   8 +
  .../arora-hal-naoqi/examples/naoqi_probe.rs   |  56 ++
  crates/arora-hal-naoqi/readme.md              |  35 +
@@ -32,7 +39,7 @@ Claude-Session: https://claude.ai/code/session_01RzWNCNTKysjou8kURpK8Th
  crates/arora-hal-naoqi/src/naoqi_hal.rs       | 607 ++++++++++++++++++
  .../arora-hal-naoqi/tests/fake_naoqi/mod.rs   | 343 ++++++++++
  crates/arora-hal-naoqi/tests/hal.rs           | 271 ++++++++
- 18 files changed, 2442 insertions(+), 17 deletions(-)
+ 18 files changed, 2399 insertions(+), 17 deletions(-)
  create mode 100644 crates/arora-hal-naoqi/CHANGELOG.md
  create mode 100644 crates/arora-hal-naoqi/Cargo.toml
  create mode 100644 crates/arora-hal-naoqi/configs/nao.json
@@ -51,7 +58,7 @@ Claude-Session: https://claude.ai/code/session_01RzWNCNTKysjou8kURpK8Th
  create mode 100644 crates/arora-hal-naoqi/tests/hal.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 401a3be..0e1ec1f 100644
+index 53a7a640..3e77e660 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -69,6 +69,12 @@ dependencies = [
@@ -68,15 +75,15 @@ index 401a3be..0e1ec1f 100644
  name = "allocator-api2"
  version = "0.2.21"
 @@ -187,7 +193,7 @@ dependencies = [
-  "ratatui",
   "rustls 0.23.43",
+  "serde_json",
   "serde_yaml 0.9.34+deprecated",
 - "sysinfo",
 + "sysinfo 0.33.1",
   "test-rust-wasm",
   "tokio",
   "uuid",
-@@ -400,6 +406,24 @@ dependencies = [
+@@ -386,6 +392,24 @@ dependencies = [
   "tokio",
  ]
  
@@ -90,8 +97,8 @@ index 401a3be..0e1ec1f 100644
 + "arora-types",
 + "async-trait",
 + "futures",
++ "libqi-vibe",
 + "log",
-+ "qi",
 + "serde",
 + "serde_json",
 + "thiserror 2.0.19",
@@ -101,7 +108,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "arora-hal-restful"
  version = "3.0.0"
-@@ -1411,7 +1435,7 @@ dependencies = [
+@@ -1424,7 +1448,7 @@ dependencies = [
   "miniz_oxide",
   "object 0.37.3",
   "rustc-demangle",
@@ -110,7 +117,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -1769,7 +1793,7 @@ dependencies = [
+@@ -1782,7 +1806,7 @@ dependencies = [
   "num-traits",
   "serde",
   "wasm-bindgen",
@@ -119,7 +126,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -3631,7 +3655,7 @@ dependencies = [
+@@ -3658,7 +3682,7 @@ dependencies = [
   "js-sys",
   "log",
   "wasm-bindgen",
@@ -128,7 +135,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -3971,7 +3995,7 @@ dependencies = [
+@@ -3998,7 +4022,7 @@ dependencies = [
   "simd_cesu8",
   "thiserror 2.0.19",
   "walkdir",
@@ -137,7 +144,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -4138,7 +4162,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -4165,7 +4189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
  dependencies = [
   "cfg-if 1.0.4",
@@ -146,7 +153,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -4148,7 +4172,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -4175,7 +4199,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
  dependencies = [
   "cfg-if 1.0.4",
@@ -155,7 +162,62 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -4249,6 +4273,17 @@ dependencies = [
+@@ -4184,6 +4208,54 @@ version = "0.2.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+ 
++[[package]]
++name = "libqi-macros-vibe"
++version = "0.1.0"
++source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=39a661bd048482a952fe31c85ac1ce697e414cc0#39a661bd048482a952fe31c85ac1ce697e414cc0"
++dependencies = [
++ "convert_case 0.10.0",
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
++[[package]]
++name = "libqi-vibe"
++version = "0.1.0"
++source = "git+https://github.com/victorpaleologue/libqi-rs-vibe?rev=39a661bd048482a952fe31c85ac1ce697e414cc0#39a661bd048482a952fe31c85ac1ce697e414cc0"
++dependencies = [
++ "async-stream",
++ "async-trait",
++ "bytes",
++ "derive_more 2.1.1",
++ "dirs",
++ "either",
++ "futures",
++ "libqi-macros-vibe",
++ "machine-uid",
++ "once_cell",
++ "ordered-float",
++ "ouroboros",
++ "pin-project-lite",
++ "rcgen 0.13.2",
++ "rustls 0.23.43",
++ "rustls-pki-types",
++ "sealed",
++ "seq-macro",
++ "serde",
++ "serde_with",
++ "sha1_smol",
++ "sysinfo 0.37.2",
++ "thiserror 2.0.19",
++ "tokio",
++ "tokio-rustls 0.26.4",
++ "tokio-stream",
++ "tokio-util",
++ "tracing",
++ "url",
++ "uuid",
++]
++
+ [[package]]
+ name = "libredox"
+ version = "0.1.18"
+@@ -4285,6 +4357,17 @@ dependencies = [
   "libc",
  ]
  
@@ -173,7 +235,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "macro-string"
  version = "0.2.0"
-@@ -4616,6 +4651,25 @@ dependencies = [
+@@ -4652,6 +4735,25 @@ dependencies = [
   "libc",
  ]
  
@@ -199,7 +261,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "object"
  version = "0.37.3"
-@@ -4682,12 +4736,47 @@ version = "0.2.0"
+@@ -4727,12 +4829,47 @@ version = "0.2.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
  
@@ -247,7 +309,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "outref"
  version = "0.5.2"
-@@ -4720,7 +4809,7 @@ dependencies = [
+@@ -4765,7 +4902,7 @@ dependencies = [
   "libc",
   "redox_syscall",
   "smallvec",
@@ -256,7 +318,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -5194,6 +5283,19 @@ dependencies = [
+@@ -5239,6 +5376,19 @@ dependencies = [
   "unicode-ident",
  ]
  
@@ -276,102 +338,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "prost"
  version = "0.14.4"
-@@ -5249,6 +5351,94 @@ dependencies = [
-  "syn 2.0.119",
- ]
- 
-+[[package]]
-+name = "qi"
-+version = "1.0.0-dev"
-+dependencies = [
-+ "async-trait",
-+ "bytes",
-+ "derive_more 2.1.1",
-+ "either",
-+ "futures",
-+ "once_cell",
-+ "ouroboros",
-+ "pin-project-lite",
-+ "qi-format",
-+ "qi-macros",
-+ "qi-messaging",
-+ "qi-value",
-+ "sealed",
-+ "serde",
-+ "serde_with",
-+ "sysinfo 0.37.2",
-+ "thiserror 2.0.19",
-+ "tokio",
-+ "tokio-stream",
-+ "tokio-util",
-+ "tracing",
-+ "url",
-+ "uuid",
-+]
-+
-+[[package]]
-+name = "qi-format"
-+version = "1.0.0-dev"
-+dependencies = [
-+ "bytes",
-+ "serde",
-+ "thiserror 2.0.19",
-+]
-+
-+[[package]]
-+name = "qi-macros"
-+version = "1.0.0-dev"
-+dependencies = [
-+ "convert_case 0.10.0",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.119",
-+]
-+
-+[[package]]
-+name = "qi-messaging"
-+version = "1.0.0-dev"
-+dependencies = [
-+ "async-stream",
-+ "bytes",
-+ "derive_more 2.1.1",
-+ "either",
-+ "futures",
-+ "pin-project-lite",
-+ "qi-format",
-+ "qi-value",
-+ "serde",
-+ "thiserror 2.0.19",
-+ "tokio",
-+ "tokio-stream",
-+ "tokio-util",
-+ "tracing",
-+ "url",
-+]
-+
-+[[package]]
-+name = "qi-value"
-+version = "1.0.0-dev"
-+dependencies = [
-+ "bytes",
-+ "derive_more 2.1.1",
-+ "dirs",
-+ "machine-uid",
-+ "once_cell",
-+ "ordered-float",
-+ "qi-macros",
-+ "seq-macro",
-+ "serde",
-+ "serde_with",
-+ "sha1_smol",
-+ "thiserror 2.0.19",
-+ "uuid",
-+]
-+
- [[package]]
- name = "quick-xml"
- version = "0.40.1"
-@@ -5347,6 +5537,7 @@ dependencies = [
+@@ -5392,6 +5542,7 @@ dependencies = [
   "libc",
   "rand_chacha 0.3.1",
   "rand_core 0.6.4",
@@ -379,7 +346,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -5397,6 +5588,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -5442,6 +5593,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
  dependencies = [
   "getrandom 0.2.17",
@@ -387,7 +354,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -6110,6 +6302,17 @@ dependencies = [
+@@ -6168,6 +6320,17 @@ dependencies = [
   "untrusted 0.9.0",
  ]
  
@@ -405,7 +372,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "secrecy"
  version = "0.8.0"
-@@ -6225,6 +6428,12 @@ dependencies = [
+@@ -6283,6 +6446,12 @@ dependencies = [
   "serde_core",
  ]
  
@@ -418,7 +385,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "serde"
  version = "1.0.229"
-@@ -6435,6 +6644,12 @@ dependencies = [
+@@ -6493,6 +6662,12 @@ dependencies = [
   "digest 0.10.7",
  ]
  
@@ -431,7 +398,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "sha2"
  version = "0.10.9"
-@@ -6891,7 +7106,21 @@ dependencies = [
+@@ -6949,7 +7124,21 @@ dependencies = [
   "libc",
   "memchr",
   "ntapi",
@@ -454,7 +421,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -7221,6 +7450,7 @@ dependencies = [
+@@ -7279,6 +7468,7 @@ dependencies = [
   "futures-core",
   "pin-project-lite",
   "tokio",
@@ -462,7 +429,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -7742,6 +7972,7 @@ dependencies = [
+@@ -7800,6 +7990,7 @@ dependencies = [
   "idna",
   "percent-encoding",
   "serde",
@@ -470,7 +437,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -7784,6 +8015,7 @@ dependencies = [
+@@ -7842,6 +8033,7 @@ dependencies = [
   "js-sys",
   "rand 0.10.2",
   "serde_core",
@@ -478,7 +445,7 @@ index 401a3be..0e1ec1f 100644
   "wasm-bindgen",
  ]
  
-@@ -8591,22 +8823,68 @@ version = "0.57.0"
+@@ -8649,22 +8841,68 @@ version = "0.57.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
  dependencies = [
@@ -550,7 +517,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "windows-implement"
  version = "0.57.0"
-@@ -8618,6 +8896,17 @@ dependencies = [
+@@ -8676,6 +8914,17 @@ dependencies = [
   "syn 2.0.119",
  ]
  
@@ -568,7 +535,7 @@ index 401a3be..0e1ec1f 100644
  [[package]]
  name = "windows-interface"
  version = "0.57.0"
-@@ -8629,21 +8918,48 @@ dependencies = [
+@@ -8687,21 +8936,48 @@ dependencies = [
   "syn 2.0.119",
  ]
  
@@ -619,7 +586,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -8655,13 +8971,31 @@ dependencies = [
+@@ -8713,13 +8989,31 @@ dependencies = [
   "windows-targets 0.52.6",
  ]
  
@@ -652,7 +619,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -8670,7 +9004,7 @@ version = "0.5.1"
+@@ -8728,7 +9022,7 @@ version = "0.5.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
  dependencies = [
@@ -661,7 +628,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -8706,7 +9040,7 @@ version = "0.61.2"
+@@ -8764,7 +9058,7 @@ version = "0.61.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
  dependencies = [
@@ -670,7 +637,7 @@ index 401a3be..0e1ec1f 100644
  ]
  
  [[package]]
-@@ -8740,6 +9074,15 @@ dependencies = [
+@@ -8798,6 +9092,15 @@ dependencies = [
   "windows_x86_64_msvc 0.52.6",
  ]
  
@@ -687,7 +654,7 @@ index 401a3be..0e1ec1f 100644
  name = "windows_aarch64_gnullvm"
  version = "0.48.5"
 diff --git a/Cargo.toml b/Cargo.toml
-index eb554fa..b1705a6 100644
+index eb554faa..f5f0061e 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -19,6 +19,7 @@ members = [
@@ -706,18 +673,9 @@ index eb554fa..b1705a6 100644
    "crates/arora-bridge",
    "crates/arora-engine",
    "crates/arora-buffers",
-@@ -89,3 +91,8 @@ debug = 1
- arora-types = { path = "crates/arora-types" }
- arora-bridge = { path = "crates/arora-bridge" }
- 
-+
-+# Local development against a checkout of libqi-rs next to this repository; drop this
-+# section to build against the published branch.
-+[patch."https://github.com/victorpaleologue/libqi-rs-vibe"]
-+qi = { path = "../../libqi-rs/qi" }
 diff --git a/crates/arora-hal-naoqi/CHANGELOG.md b/crates/arora-hal-naoqi/CHANGELOG.md
 new file mode 100644
-index 0000000..d3f09d2
+index 00000000..d3f09d2b
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/CHANGELOG.md
 @@ -0,0 +1,19 @@
@@ -742,10 +700,10 @@ index 0000000..d3f09d2
 +- `arora-naoqi` runner binary (feature `runner`).
 diff --git a/crates/arora-hal-naoqi/Cargo.toml b/crates/arora-hal-naoqi/Cargo.toml
 new file mode 100644
-index 0000000..94838d2
+index 00000000..c0aac683
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/Cargo.toml
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +[package]
 +name = "arora-hal-naoqi"
 +version = "0.1.0"
@@ -775,8 +733,10 @@ index 0000000..94838d2
 +async-trait = "0.1"
 +futures = "0.3"
 +log = "0.4"
-+# The Rust implementation of the qi framework (libqi), the NAOqi middleware.
-+qi = { git = "https://github.com/victorpaleologue/libqi-rs-vibe", branch = "claude/quirky-noether-olm9a7" }
++# The Rust implementation of the qi framework (libqi), the NAOqi middleware. The package is
++# `libqi-vibe`; the library is used as `qi`. Pinned to a commit until libqi-vibe 0.1.0 is on
++# crates.io, then `qi = { package = "libqi-vibe", version = "0.1" }`.
++qi = { package = "libqi-vibe", git = "https://github.com/victorpaleologue/libqi-rs-vibe", rev = "39a661bd048482a952fe31c85ac1ce697e414cc0" }
 +serde = { version = "1", features = ["derive"] }
 +serde_json = "1"
 +thiserror = "2"
@@ -787,7 +747,7 @@ index 0000000..94838d2
 +tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 diff --git a/crates/arora-hal-naoqi/configs/nao.json b/crates/arora-hal-naoqi/configs/nao.json
 new file mode 100644
-index 0000000..e15adf1
+index 00000000..e15adf14
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/configs/nao.json
 @@ -0,0 +1,8 @@
@@ -801,7 +761,7 @@ index 0000000..e15adf1
 +}
 diff --git a/crates/arora-hal-naoqi/examples/naoqi_probe.rs b/crates/arora-hal-naoqi/examples/naoqi_probe.rs
 new file mode 100644
-index 0000000..40920e0
+index 00000000..40920e04
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/examples/naoqi_probe.rs
 @@ -0,0 +1,56 @@
@@ -863,7 +823,7 @@ index 0000000..40920e0
 +}
 diff --git a/crates/arora-hal-naoqi/readme.md b/crates/arora-hal-naoqi/readme.md
 new file mode 100644
-index 0000000..f4fdc80
+index 00000000..279539f9
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/readme.md
 @@ -0,0 +1,35 @@
@@ -904,7 +864,7 @@ index 0000000..f4fdc80
 +by `ALMemory` events.
 diff --git a/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs b/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs
 new file mode 100644
-index 0000000..ead0e73
+index 00000000..ead0e731
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/bin/arora-naoqi.rs
 @@ -0,0 +1,41 @@
@@ -951,7 +911,7 @@ index 0000000..ead0e73
 +}
 diff --git a/crates/arora-hal-naoqi/src/config.rs b/crates/arora-hal-naoqi/src/config.rs
 new file mode 100644
-index 0000000..a132805
+index 00000000..a132805f
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/config.rs
 @@ -0,0 +1,230 @@
@@ -1187,7 +1147,7 @@ index 0000000..a132805
 +}
 diff --git a/crates/arora-hal-naoqi/src/conversions/joints.rs b/crates/arora-hal-naoqi/src/conversions/joints.rs
 new file mode 100644
-index 0000000..16692aa
+index 00000000..16692aaf
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/conversions/joints.rs
 @@ -0,0 +1,119 @@
@@ -1312,7 +1272,7 @@ index 0000000..16692aa
 +}
 diff --git a/crates/arora-hal-naoqi/src/conversions/keys.rs b/crates/arora-hal-naoqi/src/conversions/keys.rs
 new file mode 100644
-index 0000000..6aaafd8
+index 00000000..6aaafd8c
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/conversions/keys.rs
 @@ -0,0 +1,157 @@
@@ -1475,7 +1435,7 @@ index 0000000..6aaafd8
 +}
 diff --git a/crates/arora-hal-naoqi/src/conversions/mod.rs b/crates/arora-hal-naoqi/src/conversions/mod.rs
 new file mode 100644
-index 0000000..f359614
+index 00000000..f3596146
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/conversions/mod.rs
 @@ -0,0 +1,9 @@
@@ -1490,7 +1450,7 @@ index 0000000..f359614
 +pub(crate) use values::{arora_f64, qi_f64, qi_list};
 diff --git a/crates/arora-hal-naoqi/src/conversions/values.rs b/crates/arora-hal-naoqi/src/conversions/values.rs
 new file mode 100644
-index 0000000..2f4da40
+index 00000000..2f4da404
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/conversions/values.rs
 @@ -0,0 +1,73 @@
@@ -1569,7 +1529,7 @@ index 0000000..2f4da40
 +}
 diff --git a/crates/arora-hal-naoqi/src/lib.rs b/crates/arora-hal-naoqi/src/lib.rs
 new file mode 100644
-index 0000000..a3df1bf
+index 00000000..bc16d604
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/lib.rs
 @@ -0,0 +1,38 @@
@@ -1613,7 +1573,7 @@ index 0000000..a3df1bf
 +}
 diff --git a/crates/arora-hal-naoqi/src/naoqi_error.rs b/crates/arora-hal-naoqi/src/naoqi_error.rs
 new file mode 100644
-index 0000000..861b273
+index 00000000..861b273e
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/naoqi_error.rs
 @@ -0,0 +1,30 @@
@@ -1649,7 +1609,7 @@ index 0000000..861b273
 +}
 diff --git a/crates/arora-hal-naoqi/src/naoqi_hal.rs b/crates/arora-hal-naoqi/src/naoqi_hal.rs
 new file mode 100644
-index 0000000..995d3e1
+index 00000000..995d3e1d
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/src/naoqi_hal.rs
 @@ -0,0 +1,607 @@
@@ -2262,7 +2222,7 @@ index 0000000..995d3e1
 +}
 diff --git a/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs b/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs
 new file mode 100644
-index 0000000..5a70787
+index 00000000..5a707877
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/tests/fake_naoqi/mod.rs
 @@ -0,0 +1,343 @@
@@ -2611,7 +2571,7 @@ index 0000000..5a70787
 +}
 diff --git a/crates/arora-hal-naoqi/tests/hal.rs b/crates/arora-hal-naoqi/tests/hal.rs
 new file mode 100644
-index 0000000..271d973
+index 00000000..271d9731
 --- /dev/null
 +++ b/crates/arora-hal-naoqi/tests/hal.rs
 @@ -0,0 +1,271 @@
@@ -2887,5 +2847,5 @@ index 0000000..271d973
 +    assert!(error.to_string().contains("connection"), "{error}");
 +}
 -- 
-2.43.0
+2.54.0 (Apple Git-157)
 

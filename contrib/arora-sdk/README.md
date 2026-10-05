@@ -1,11 +1,15 @@
 # NAOqi HAL for arora-sdk
 
-`0001-Add-arora-hal-naoqi.patch` adds the crate `crates/arora-hal-naoqi` to
-[arora-sdk](https://github.com/semio-ai/arora-sdk) (on top of commit `f2700c7`): NAO and
-Pepper robots as Arora devices through their NAOqi middleware, using the `qi` crate of this
-repository instead of the C++ SDK. It replaces the role of the `modules/nao` stub (a
-cross-compiled C++ module that only said hello), following the recommendation of the port
-study: the runtime expects hardware behind the `Hal` trait, not behind a module.
+The HAL is proposed upstream as
+[semio-ai/arora-sdk#258](https://github.com/semio-ai/arora-sdk/pull/258).
+`0001-Add-arora-hal-naoqi.patch` is that pull request squashed into one commit on arora-sdk
+commit `770a4a7f`, kept here so the validation in `docs/validation.md` stays reproducible.
+
+It adds the crate `crates/arora-hal-naoqi`: NAO and Pepper robots as Arora devices through
+their NAOqi middleware, using `libqi-vibe` (this repository, used as `qi`) instead of the
+C++ SDK. It replaces the role of the `modules/nao` stub (a cross-compiled C++ module that
+only said hello), following the recommendation of the port study: the runtime expects
+hardware behind the `Hal` trait, not behind a module.
 
 ```sh
 cd arora-sdk
@@ -14,10 +18,9 @@ cargo test -p arora-hal-naoqi
 cargo run -p arora-hal-naoqi --features runner --bin arora-naoqi -- tcp://nao.local:9559
 ```
 
-The patch depends on `qi` from this repository's branch through a git dependency, and adds
-a `[patch]` section pointing at a checkout of `libqi-rs` next to `arora-sdk` for local
-development: drop that section, or point the dependency at a published `qi`, when
-integrating.
+The patch depends on `libqi-vibe` through a git dependency pinned to a commit of this
+repository; once `libqi-vibe` is on crates.io it becomes
+`qi = { package = "libqi-vibe", version = "0.1" }`.
 
 ## What the HAL does
 
