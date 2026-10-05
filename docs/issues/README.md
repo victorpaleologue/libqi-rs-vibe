@@ -17,5 +17,4 @@ Issues found during the work on this branch, one file each, ready to be filed on
 | 10 | [naoqi-sim: no physics, constant sensors, missing services](10-naoqi-sim-no-physics-constant-sensors-missing-services.md) | enhancement |
 | 11 | [naoqi_driver2 findings to report upstream: unlatched /info, LogMessage timestamp](11-naoqi-driver2-findings-to-report-upstream-unlatched-info-log.md) | documentation |
 | 12 | [Upstream the Boost 1.90 / GCC 15 patches for ros-naoqi libqi, libqicore and naoqi_driver2](12-upstream-the-boost-1-90-gcc-15-patches-for-ros-naoqi-libqi-l.md) | documentation |
-| 13 | [arora-sdk NAOqi HAL: submit upstream and settle its open design questions](13-arora-sdk-naoqi-hal-submit-upstream-and-settle-its-open-desi.md) | documentation |
 | 14 | [Interop harness: libqi must be built from source by hand, and its absence is silent](14-interop-harness-libqi-must-be-built-from-source-by-hand-and-.md) | enhancement |

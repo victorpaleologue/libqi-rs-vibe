@@ -30,7 +30,7 @@ The crates require Rust 1.90 or later and are licensed under the BSD 3-Clause li
 - Feature `naoqi-sim`: `qi::naoqi_sim` and the `naoqi-sim` command, a simulated NAO or Pepper with 16 NAOqi services, validated against the
   ROS 2 `naoqi_driver2`.
 - Interoperability harness against C++ `libqi` (`interop/`), architecture and validation
-  documentation, contributed patches for arora-sdk and the ros-naoqi build.
+  documentation, contributed patches for the ros-naoqi build.
 
 ### Known limitations
 
