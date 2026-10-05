@@ -72,6 +72,9 @@ listens there too, over TLS.
 
 ## arora-sdk
 
-`contrib/arora-sdk/` holds the NAOqi HAL for Arora. Its 17 tests run against an in-crate fake
-NAOqi, and its probe example was run against `naoqi-sim`: description, joint states, battery,
-inertial unit and sonar keys flow in; joint targets, speech and LEDs flow out.
+The NAOqi HAL for Arora is semio-ai/arora-sdk#258. At its
+commit `b5160244`, its 23 tests run against an in-crate fake NAOqi, one of them the whole
+device (HAL, behavior leaves, default tree) on the Arora runtime; its runner cross-builds
+for the NAO (`i686-unknown-linux-musl`). Its probe example was run against `naoqi-sim`:
+description, joint states, battery, inertial unit and sonar keys flow in; joint targets,
+speech and LEDs flow out.
