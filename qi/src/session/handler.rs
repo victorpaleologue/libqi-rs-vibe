@@ -5,7 +5,7 @@
 //! members of bound objects (events registration, properties access, meta object retrieval and
 //! termination), and dispatches incoming events to the local subscriptions of remote signals.
 
-use super::{SessionState, WeakSession};
+use super::{Protocol, SessionState, WeakSession};
 use crate::{
     call,
     error::{HandlerError, NoHandlerError},
@@ -232,11 +232,18 @@ fn encode_reply(
 ) -> Result<handler::Reply> {
     match return_type {
         ReturnType::Declared => Ok(handler::Reply::new(state.encode(&result)?)),
-        ReturnType::Forced(_signature) => {
-            // Conversion to the requested signature is not attempted: the value is sent as a
-            // dynamic and the caller converts it.
-            let payload = state.encode(&Value::Dynamic(Box::new(result)))?;
-            Ok(handler::Reply::dynamic(payload))
+        ReturnType::Forced(signature) => {
+            // Like the reference implementation: the value is sent as a dynamic of the requested
+            // type when it converts to it, with the declared type otherwise (the caller then
+            // converts it; a dynamic would lose the structure annotations that conversion may
+            // need, e.g. between service infos of different generations).
+            match result.clone().convert_to(signature.as_type()) {
+                Ok(converted) => {
+                    let payload = state.encode(&Value::Dynamic(Box::new(converted)))?;
+                    Ok(handler::Reply::dynamic(payload))
+                }
+                Err(_) => Ok(handler::Reply::new(state.encode(&result)?)),
+            }
         }
     }
 }
@@ -338,7 +345,12 @@ async fn handle_special_call(
         }
         generic::META_OBJECT => {
             let (_object,): (u32,) = cast_args(args)?;
-            generic::merge(object.meta()).into_value()
+            let meta = generic::merge(object.meta());
+            if state.protocol() == Some(Protocol::Legacy) {
+                legacy_compatible(meta).into_value()
+            } else {
+                meta.into_value()
+            }
         }
         generic::TERMINATE => {
             let (_object,): (u32,) = cast_args(args)?;
@@ -373,6 +385,23 @@ async fn handle_special_call(
         action => return Err(Error::MethodNotFound(ActionNameOrId::Id(action))),
     };
     Ok(handler::Reply::new(state.encode(&result)?))
+}
+
+/// Removes from a meta object the members whose signatures a legacy peer cannot parse: `libqi`
+/// 2.1 knows neither optionals (`+`) nor variadic parameters (`#`), and fails to fetch a meta
+/// object containing one ("Invalid signature").
+fn legacy_compatible(mut meta: object::MetaObject) -> object::MetaObject {
+    fn supported(signature: &value::Signature) -> bool {
+        !signature.to_string().contains(['+', '#'])
+    }
+    meta.methods.retain(|_, method| {
+        supported(&method.parameters_signature) && supported(&method.return_signature)
+    });
+    meta.signals
+        .retain(|_, signal| supported(&signal.signature));
+    meta.properties
+        .retain(|_, property| supported(&property.signature));
+    meta
 }
 
 fn cast_args<T>(args: Value<'static>) -> Result<T>

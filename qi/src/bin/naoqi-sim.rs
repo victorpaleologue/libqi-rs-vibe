@@ -6,7 +6,7 @@
 use anyhow::Context as _;
 use clap::Parser;
 use qi::naoqi_sim::{Config, RobotModel, Script, Simulator};
-use qi::Address;
+use qi::{Address, Protocol};
 use std::path::PathBuf;
 use tracing_subscriber::{
     filter::LevelFilter, filter::Targets, layer::SubscriberExt, util::SubscriberInitExt,
@@ -37,6 +37,12 @@ struct Args {
     /// The password of the "nao" user. Without it, every connection is accepted.
     #[arg(long)]
     password: Option<String>,
+
+    /// The protocol variant the robot speaks: "legacy" (NAOqi 2.1: no authentication,
+    /// capabilities advertised on connection) or "standard" (NAOqi 2.3 and later). Defaults to
+    /// the one of the NAOqi version.
+    #[arg(long)]
+    protocol: Option<Protocol>,
 
     /// A scenario script to run once the simulator is started ("-" reads the standard input).
     #[arg(long)]
@@ -96,10 +102,11 @@ fn default_listen(with_password: bool) -> anyhow::Result<Vec<Address>> {
 fn announce(simulator: &Simulator) {
     for endpoint in simulator.endpoints() {
         println!(
-            "naoqi-sim: {} robot \"{}\" (NAOqi {}) listening on {endpoint}",
+            "naoqi-sim: {} robot \"{}\" (NAOqi {}, {} protocol) listening on {endpoint}",
             simulator.robot().body_type(),
             simulator.config().name,
-            simulator.version()
+            simulator.version(),
+            simulator.protocol()
         );
     }
 }
@@ -125,6 +132,9 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(password) = args.password {
         config = config.with_password(password);
+    }
+    if let Some(protocol) = args.protocol {
+        config = config.with_protocol(protocol);
     }
     let simulator = Simulator::start(config)
         .await

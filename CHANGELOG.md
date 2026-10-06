@@ -9,6 +9,29 @@ released together.
 
 ## [Unreleased]
 
+### Added
+
+- Compatibility with NAOqi 2.1 robots (the `libqi` of 2014): the protocol variant of a peer is
+  detected when a session is established (`qi::Protocol`, readable on `ObjectClient` and on the
+  service directory client). A legacy server (error reply to the authentication call after its
+  `Capabilities` message) gets the local capabilities with a `Capabilities` message; a legacy
+  client (first request without authentication) is accepted when no authenticator is set.
+  Service infos are read with or without their `objectUid` field and written without it to
+  peers without the `ObjectPtrUID` capability; members with optional or variadic signatures are
+  hidden from legacy peers.
+- Emulation of a NAOqi 2.1 server: `InitializingNode::with_server_protocol(Protocol::Legacy)`,
+  `naoqi_sim::Config::with_protocol`, and `naoqi-sim --protocol legacy` (the default for a
+  NAOqi version below 2.3).
+- `interop/cpp21/`: the harness ported to the `libqi` of NAOqi 2.1, built from source in an
+  Ubuntu 14.04 container, with its byte fixtures (`interop/vectors/libqi-2.1-values.jsonl`), a
+  NAOqi probe for `naoqi-sim`, and `qi/tests/interop_cpp21.rs`.
+
+### Fixed
+
+- A reply to a call that requests a return signature the value does not convert to is sent
+  with the declared type, like `libqi` does, instead of as a dynamic value (which lost the
+  structure annotations the caller needs to convert it).
+
 ## [0.1.0] - 2026-09-29
 
 First release of libqi-rs-vibe, a fork of [libqi-rs](https://github.com/nyibbang/libqi-rs)

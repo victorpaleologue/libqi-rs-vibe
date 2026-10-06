@@ -302,12 +302,22 @@ impl ServiceDirectory for LocalServiceDirectory {
 
 #[async_trait]
 impl Object for LocalServiceDirectory {
+    /// The meta object depends on the caller: peers without the `ObjectPtrUID` capability
+    /// (older than `libqi` 2.9) get service infos without object UID.
     fn meta(&self) -> &MetaObject {
-        &Meta::get().object
+        &Meta::for_caller().object
     }
 
     async fn meta_call(&self, ident: ActionNameOrId, args: Value<'_>) -> Result<Value<'static>> {
-        let meta = Meta::get();
+        let meta = Meta::for_caller();
+        let with_object_uid = std::ptr::eq(meta, Meta::get());
+        let info_value = |info: service::Info| {
+            if with_object_uid {
+                info.into_value()
+            } else {
+                info.into_value_without_object_uid()
+            }
+        };
         let method = meta
             .object
             .method(&ident)
@@ -315,10 +325,10 @@ impl Object for LocalServiceDirectory {
         let id = method.uid;
         let value = if id == meta.service {
             let (name,): (String,) = args.cast_into()?;
-            self.service(&name).await?.into_value()
+            info_value(self.service(&name).await?)
         } else if id == meta.services {
             let (): () = args.cast_into()?;
-            self.services().await?.into_value()
+            Value::List(self.services().await?.into_iter().map(info_value).collect())
         } else if id == meta.register_service {
             let (info,): (service::Info,) = args.cast_into()?;
             self.register(&info).await?.into_value()
@@ -391,6 +401,11 @@ impl Client {
         &self.object
     }
 
+    /// The protocol variant the node hosting the service directory speaks.
+    pub fn protocol(&self) -> Option<session::Protocol> {
+        self.object.protocol()
+    }
+
     async fn call<R, T>(&self, name: &str, args: T) -> Result<R>
     where
         T: for<'a> IntoValue<'a> + Reflect + Send,
@@ -398,20 +413,72 @@ impl Client {
     {
         crate::ObjectExt::call(&self.object, name, args).await
     }
+
+    /// Calls a method returning service infos, which older service directories write without
+    /// object UID: the value is converted leniently rather than to the static type.
+    async fn call_for_infos<T>(&self, name: &str, args: T) -> Result<Value<'static>>
+    where
+        T: for<'a> IntoValue<'a> + Reflect + Send,
+    {
+        let args = object::params::to_params::<T>(args.into_value());
+        self.object.meta_call(name.into(), args).await
+    }
+
+    /// Calls a method taking a service info, written in the form the directory declares: older
+    /// directories (before `libqi` 2.9) know no object UID field.
+    async fn call_with_info(&self, name: &str, info: &service::Info) -> Result<Value<'static>> {
+        let expects_object_uid = self
+            .object
+            .meta()
+            .method(&name.into())
+            .is_none_or(|method| {
+                method
+                    .parameters_signature
+                    .to_string()
+                    .contains("objectUid")
+            });
+        let info = if expects_object_uid {
+            info.clone().into_value()
+        } else {
+            info.clone().into_value_without_object_uid()
+        };
+        self.object
+            .meta_call(name.into(), Value::Tuple(vec![info]))
+            .await
+    }
 }
 
 #[async_trait]
 impl ServiceDirectory for Client {
     async fn services(&self) -> Result<Vec<service::Info>> {
-        self.call("services", ()).await
+        let value = self.call_for_infos("services", ()).await?;
+        let Value::List(items) = value else {
+            return Err(Error::Other(
+                format!("expected a list of service infos, got {value}").into(),
+            ));
+        };
+        items
+            .into_iter()
+            .map(|item| {
+                service::Info::from_value(item).map_err(|err| {
+                    crate::error::ValueConversionError::MethodReturnValue(err).into()
+                })
+            })
+            .collect()
     }
 
     async fn service(&self, name: &str) -> Result<service::Info> {
-        self.call("service", name.to_owned()).await
+        let value = self.call_for_infos("service", name.to_owned()).await?;
+        service::Info::from_value(value)
+            .map_err(|err| crate::error::ValueConversionError::MethodReturnValue(err).into())
     }
 
     async fn register(&self, info: &service::Info) -> Result<service::Id> {
-        self.call("registerService", info.clone()).await
+        let value = self.call_with_info("registerService", info).await?;
+        value
+            .convert_to(service::Id::ty().as_ref())
+            .and_then(service::Id::from_value)
+            .map_err(|err| crate::error::ValueConversionError::MethodReturnValue(err).into())
     }
 
     async fn unregister(&self, id: service::Id) -> Result<()> {
@@ -423,7 +490,8 @@ impl ServiceDirectory for Client {
     }
 
     async fn update(&self, info: &service::Info) -> Result<()> {
-        self.call("updateServiceInfo", info.clone()).await
+        self.call_with_info("updateServiceInfo", info).await?;
+        Ok(())
     }
 
     async fn machine_id(&self) -> Result<os::MachineId> {
@@ -455,8 +523,36 @@ struct Meta {
 }
 
 impl Meta {
+    /// The meta object advertised to peers that know the object UID of service infos (`libqi`
+    /// 2.9 and later, which advertise the `ObjectPtrUID` capability).
     fn get() -> &'static Self {
-        static META: Lazy<Meta> = Lazy::new(|| {
+        static META: Lazy<Meta> = Lazy::new(|| Meta::build(true));
+        &META
+    }
+
+    /// The meta object advertised to older peers: service infos have no object UID field. Those
+    /// peers cannot convert the seven-field structure to theirs.
+    fn get_without_object_uid() -> &'static Self {
+        static META: Lazy<Meta> = Lazy::new(|| Meta::build(false));
+        &META
+    }
+
+    /// The meta object for the caller of the current call, according to its capabilities.
+    fn for_caller() -> &'static Self {
+        match call::caller_capabilities() {
+            Some(capabilities) if !capabilities.object_ptr_uid => Self::get_without_object_uid(),
+            _ => Self::get(),
+        }
+    }
+
+    fn build(with_object_uid: bool) -> Self {
+        let info_type = if with_object_uid {
+            service::Info::ty()
+        } else {
+            Some(service::Info::ty_without_object_uid())
+        };
+        let infos_type = Some(crate::value::Type::list_of(info_type.clone()));
+        {
             let mut action_id = object::ACTION_START_ID;
             let mut builder = MetaObject::builder();
             let service = action_id.next().unwrap();
@@ -464,21 +560,21 @@ impl Meta {
                 let mut m = MetaMethod::builder(service);
                 m.set_name("service");
                 m.parameter(0).set_type(<&str>::ty());
-                m.return_value().set_type(service::Info::ty());
+                m.return_value().set_type(info_type.clone());
                 m.build()
             });
             let services = action_id.next().unwrap();
             builder.add_method({
                 let mut m = MetaMethod::builder(services);
                 m.set_name("services");
-                m.return_value().set_type(Vec::<service::Info>::ty());
+                m.return_value().set_type(infos_type);
                 m.build()
             });
             let register_service = action_id.next().unwrap();
             builder.add_method({
                 let mut m = MetaMethod::builder(register_service);
                 m.set_name("registerService");
-                m.parameter(0).set_type(service::Info::ty());
+                m.parameter(0).set_type(info_type.clone());
                 m.return_value().set_type(service::Id::ty());
                 m.build()
             });
@@ -500,7 +596,7 @@ impl Meta {
             builder.add_method({
                 let mut m = MetaMethod::builder(update_service_info);
                 m.set_name("updateServiceInfo");
-                m.parameter(0).set_type(service::Info::ty());
+                m.parameter(0).set_type(info_type);
                 m.build()
             });
             let service_added = action_id.next().unwrap();
@@ -536,8 +632,7 @@ impl Meta {
                 service_removed,
                 machine_id,
             }
-        });
-        &META
+        }
     }
 }
 

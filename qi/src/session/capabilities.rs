@@ -9,6 +9,64 @@
 use crate::value::{IntoValue, KeyDynValueMap};
 use once_cell::sync::Lazy;
 
+/// The variant of the messaging protocol a peer speaks, detected when the session is
+/// established.
+///
+/// The binary format and the messages are the same in both variants; they differ in how a
+/// connection starts and in the capabilities the peer may have.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub enum Protocol {
+    /// The protocol of `libqi` up to 2.2, the one of NAOqi 2.1 robots.
+    ///
+    /// There is no authentication: both ends advertise their capabilities with a `Capabilities`
+    /// message right after the connection, and a server answers the authentication call of
+    /// newer clients with an error. Calls cannot be canceled, object references carry no UID
+    /// and service endpoints are absolute.
+    Legacy,
+    /// The protocol of `libqi` 2.3 and later (NAOqi 2.3 to 2.9, `libqi` 3 and 4).
+    ///
+    /// The connecting end authenticates first, and the capabilities are exchanged in that
+    /// handshake.
+    #[default]
+    Standard,
+}
+
+impl Protocol {
+    /// The protocol a NAOqi version speaks, from its `major.minor` prefix: NAOqi 2.1 and
+    /// earlier speak the legacy protocol.
+    pub fn of_naoqi_version(version: &str) -> Self {
+        let mut parts = version.split('.').map(|part| part.parse::<u32>().ok());
+        match (parts.next().flatten(), parts.next().flatten()) {
+            (Some(major), Some(minor)) if (major, minor) < (2, 3) => Self::Legacy,
+            (Some(major), None) if major < 2 => Self::Legacy,
+            _ => Self::Standard,
+        }
+    }
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Legacy => "legacy",
+            Self::Standard => "standard",
+        })
+    }
+}
+
+impl std::str::FromStr for Protocol {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "legacy" => Ok(Self::Legacy),
+            "standard" => Ok(Self::Standard),
+            _ => Err(format!(
+                "unknown protocol \"{s}\": expected \"legacy\" or \"standard\""
+            )),
+        }
+    }
+}
+
 /// The set of capabilities known to this implementation.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Capabilities {
@@ -45,6 +103,18 @@ impl Capabilities {
         remote_cancelable_calls: true,
         object_ptr_uid: true,
         relative_endpoint_uri: true,
+    };
+
+    /// The capabilities this implementation advertises when it emulates a legacy server (the
+    /// ones of `libqi` 2.1, except the meta object cache that this implementation does not
+    /// support).
+    pub const LEGACY_LOCAL: Self = Self {
+        client_server_socket: true,
+        message_flags: true,
+        meta_object_cache: false,
+        remote_cancelable_calls: false,
+        object_ptr_uid: false,
+        relative_endpoint_uri: false,
     };
 
     /// The capabilities assumed for a remote that advertised nothing.
@@ -135,6 +205,19 @@ pub(crate) fn local_map() -> &'static KeyDynValueMap {
     &LOCAL_CAPABILITIES_MAP
 }
 
+/// The map of capabilities advertised when emulating a legacy server: only the keys a `libqi`
+/// 2.1 process knows.
+pub(crate) fn legacy_local_map() -> &'static KeyDynValueMap {
+    static MAP: Lazy<KeyDynValueMap> = Lazy::new(|| {
+        let mut map = KeyDynValueMap::new();
+        map.set(Capabilities::CLIENT_SERVER_SOCKET, true);
+        map.set(Capabilities::MESSAGE_FLAGS, true);
+        map.set(Capabilities::META_OBJECT_CACHE, false);
+        map
+    });
+    &MAP
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +247,21 @@ mod tests {
     #[test]
     fn local_map_round_trips() {
         assert_eq!(Capabilities::from_map(local_map()), Capabilities::LOCAL);
+        assert_eq!(
+            Capabilities::from_map(legacy_local_map()),
+            Capabilities::LEGACY_LOCAL
+        );
+    }
+
+    #[test]
+    fn protocol_of_naoqi_versions() {
+        assert_eq!(Protocol::of_naoqi_version("2.1.4.13"), Protocol::Legacy);
+        assert_eq!(Protocol::of_naoqi_version("1.14.5"), Protocol::Legacy);
+        assert_eq!(Protocol::of_naoqi_version("2.3.0"), Protocol::Standard);
+        assert_eq!(Protocol::of_naoqi_version("2.8.7.4"), Protocol::Standard);
+        assert_eq!(Protocol::of_naoqi_version("2.9.5.1"), Protocol::Standard);
+        assert_eq!(Protocol::of_naoqi_version("garbage"), Protocol::Standard);
+        assert_eq!("legacy".parse(), Ok(Protocol::Legacy));
+        assert_eq!(Protocol::Standard.to_string(), "standard");
     }
 }

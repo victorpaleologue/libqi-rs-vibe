@@ -19,7 +19,22 @@ pub use value::service::*;
 const UNSPECIFIED_ID: Id = Id(0);
 
 /// The information describing a service in a service directory.
-#[derive(Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, qi_macros::Valuable)]
+///
+/// The object UID field was added by `libqi` 2.9: the service directories of older robots
+/// (NAOqi 2.1 to 2.8) write the six other fields only, which the conversion from values accepts.
+#[derive(
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    qi_macros::Reflect,
+    qi_macros::ToValue,
+    qi_macros::IntoValue,
+)]
 #[qi(value(crate = "crate::value", case = "camelCase", name = "ServiceInfo"))]
 pub struct Info {
     pub(super) name: String,
@@ -98,6 +113,27 @@ impl Info {
     pub fn object_uid(&self) -> Option<object::Uid> {
         self.object_uid.0
     }
+
+    /// The type of service infos without the object UID field, as peers older than `libqi` 2.9
+    /// know them.
+    pub(crate) fn ty_without_object_uid() -> value::Type {
+        let Some(value::Type::Tuple(value::ty::Tuple::Struct { name, mut fields })) =
+            <Self as value::Reflect>::ty()
+        else {
+            unreachable!("a service info is a structure");
+        };
+        fields.pop();
+        value::Type::Tuple(value::ty::Tuple::Struct { name, fields })
+    }
+
+    /// Converts into a value without the object UID field, for peers older than `libqi` 2.9.
+    pub(crate) fn into_value_without_object_uid(self) -> value::Value<'static> {
+        let mut value = value::IntoValue::into_value(self);
+        if let value::Value::Tuple(fields) = &mut value {
+            fields.truncate(6);
+        }
+        value
+    }
 }
 
 impl std::fmt::Display for Info {
@@ -124,6 +160,35 @@ impl std::fmt::Display for Info {
             endpoint.fmt(f)?;
         }
         write!(f, "], node={node_uid}, object={object_uid})")
+    }
+}
+
+impl<'a> value::FromValue<'a> for Info {
+    fn from_value(v: value::Value<'a>) -> Result<Self, value::FromValueError> {
+        let mismatch = |v: &value::Value<'_>| value::FromValueError::TypeMismatch {
+            expected: "ServiceInfo".to_owned(),
+            actual: v.to_string(),
+        };
+        let value::Value::Tuple(mut fields) = v else {
+            return Err(mismatch(&v));
+        };
+        match fields.len() {
+            // Before libqi 2.9, there was no object UID.
+            6 => fields.push(value::Value::String(String::new().into())),
+            7 => {}
+            _ => return Err(mismatch(&value::Value::Tuple(fields))),
+        }
+        let mut fields = fields.into_iter();
+        let mut next = || fields.next().expect("seven fields");
+        Ok(Self {
+            name: next().cast_into()?,
+            id: next().cast_into()?,
+            machine_id: next().cast_into()?,
+            process_id: next().cast_into()?,
+            endpoints: next().cast_into()?,
+            node_uid: next().cast_into()?,
+            object_uid: next().cast_into()?,
+        })
     }
 }
 
@@ -310,6 +375,39 @@ mod tests {
         );
         // Round trip.
         assert_eq!(service_info.into_format().unwrap(), value_in);
+    }
+
+    /// Service directories of NAOqi 2.1 to 2.8 write no object UID.
+    #[test]
+    fn service_info_without_object_uid_converts() {
+        let value = value::Value::Tuple(vec![
+            value::Value::String("ALMemory".into()),
+            value::Value::UInt32(3),
+            value::Value::String("9a65b56e-c3d3-4485-8924-661b036202b3".into()),
+            value::Value::UInt32(1234),
+            value::Value::List(vec![value::Value::String("tcp://127.0.0.1:9559".into())]),
+            value::Value::String("361ecec4-00f7-4c94-a6e2-d91e28c5a06c".into()),
+        ]);
+        let info = <Info as value::FromValue>::from_value(value).unwrap();
+        assert_eq!(info.name(), "ALMemory");
+        assert_eq!(info.id(), Id(3));
+        assert_eq!(info.process_id(), 1234);
+        assert_eq!(info.endpoints().len(), 1);
+        assert_eq!(info.object_uid(), None);
+        // Five fields are not a service info.
+        let value = value::Value::Tuple(vec![value::Value::Unit; 5]);
+        assert!(<Info as value::FromValue>::from_value(value).is_err());
+        // The legacy type and value have six fields and round trip.
+        assert_eq!(
+            value::Signature::from(Info::ty_without_object_uid()).to_string(),
+            "(sIsI[s]s)<ServiceInfo,name,serviceId,machineId,processId,endpoints,sessionId>"
+        );
+        let legacy_value = info.clone().into_value_without_object_uid();
+        assert!(matches!(&legacy_value, value::Value::Tuple(fields) if fields.len() == 6));
+        assert_eq!(
+            <Info as value::FromValue>::from_value(legacy_value).unwrap(),
+            info
+        );
     }
 
     #[test]

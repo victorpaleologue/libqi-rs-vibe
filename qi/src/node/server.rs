@@ -1,4 +1,9 @@
-use crate::{auth::Authenticator, messaging::Address, service::SharedServices, session};
+use crate::{
+    auth::Authenticator,
+    messaging::Address,
+    service::SharedServices,
+    session::{self, Protocol},
+};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::watch, task};
 
@@ -22,6 +27,7 @@ pub(super) type EndpointsWatcher = watch::Receiver<HashMap<Address, Vec<Address>
 pub(super) async fn start_servers(
     services: SharedServices,
     authenticator: Option<Arc<dyn Authenticator + Send + Sync>>,
+    protocol: Protocol,
     addresses: impl IntoIterator<Item = Address>,
 ) -> Result<(ServerSet, EndpointsWatcher), std::io::Error> {
     let (endpoints_sender, endpoints_receiver) = watch::channel(Default::default());
@@ -29,7 +35,7 @@ pub(super) async fn start_servers(
     let mut update_endpoints_tasks = task::JoinSet::new();
     for address in addresses {
         let (server, mut server_endpoints) =
-            session::server(address, authenticator.clone(), services.clone()).await?;
+            session::server(address, authenticator.clone(), protocol, services.clone()).await?;
         servers.push(server);
         // Publish the initial endpoints synchronously, so that they are known when the servers
         // are started.
