@@ -561,3 +561,77 @@ async fn nodes_communicate_over_tls() {
         .await
         .is_err());
 }
+
+/// A node emulating a NAOqi 2.1 server: the client detects the legacy protocol, the capabilities
+/// it implies, and everything but what the protocol lacks works; members the legacy protocol
+/// cannot describe are hidden.
+#[tokio::test]
+async fn legacy_protocol_is_detected_and_emulated() {
+    use qi::{value::Dynamic, Protocol};
+
+    let (calc, calc_object) = Calculator::new();
+    let mut builder = ObjectBuilder::new();
+    builder.add_method("echo_optional", |v: Option<i32>| async move { Ok(v) });
+    builder.add_method("echo", |v: i32| async move { Ok(v) });
+    let optionals = AnyObject::new(builder.build());
+    let mut init = node::init();
+    init.with_server_protocol(Protocol::Legacy);
+    init.add_service_object("Calculator", calc_object);
+    init.add_service_object("Optionals", optionals);
+    init.bind("tcp://127.0.0.1:0".parse().unwrap());
+    let host = init.host_space().start().await.unwrap();
+    let address = host
+        .endpoints()
+        .iter()
+        .find_map(|target| target.to_string().parse::<Address>().ok())
+        .unwrap();
+
+    let client = connect(address).await;
+    assert_eq!(
+        client.service_directory().protocol(),
+        Some(Protocol::Legacy)
+    );
+    let infos = client.service_directory().services().await.unwrap();
+    assert!(infos.iter().any(|info| info.name() == "Calculator"));
+
+    let service = client.service("Calculator").await.unwrap();
+    let proxy = service.as_client().unwrap();
+    assert_eq!(proxy.protocol(), Some(Protocol::Legacy));
+    assert!(!proxy.capabilities().object_ptr_uid);
+    assert!(!proxy.capabilities().remote_cancelable_calls);
+    assert!(proxy.capabilities().message_flags);
+
+    // Calls, errors, signals and properties.
+    let sum: i32 = service.call("add", (1, 2)).await.unwrap();
+    assert_eq!(sum, 3);
+    let err = service.call::<(), _, _>("fail", ()).await.unwrap_err();
+    assert!(err.to_string().contains("expected failure"), "{err}");
+    let mut fired = service.subscribe::<_, i32>("fired").await.unwrap();
+    let () = service.call("fire", 7).await.unwrap();
+    assert_eq!(timeout(TIMEOUT, fired.next()).await.unwrap(), Some(7));
+    service.set_property("value", 5).await.unwrap();
+    let value: i32 = service.property("value").await.unwrap();
+    assert_eq!(value, 5);
+
+    // Objects in both directions, without UID on the wire.
+    let counter: AnyObject = service.call("make_counter", ()).await.unwrap();
+    let one: i32 = counter.call("increment", ()).await.unwrap();
+    assert_eq!(one, 1);
+    let mut cb = ObjectBuilder::new();
+    cb.add_method("compute", |n: i32| async move { Ok(n * 2) });
+    let callback = AnyObject::new(cb.build());
+    let result: i32 = service.call("use_callback", (callback, 20)).await.unwrap();
+    assert_eq!(result, 41);
+    let _ = calc;
+
+    // Members with optionals are hidden from legacy peers, the others stay.
+    let optionals = client.service("Optionals").await.unwrap();
+    assert!(optionals.meta().methods.values().any(|m| m.name == "echo"));
+    assert!(!optionals
+        .meta()
+        .methods
+        .values()
+        .any(|m| m.name == "echo_optional"));
+    let Dynamic(echoed): Dynamic<i32> = optionals.call("echo", Dynamic(3)).await.unwrap();
+    assert_eq!(echoed, 3);
+}

@@ -93,6 +93,21 @@ pub fn context() -> Option<Context> {
     CONTEXT.try_with(Clone::clone).ok()
 }
 
+/// The capabilities shared with the remote caller of the current call, if the call comes from a
+/// remote peer.
+pub(crate) fn caller_capabilities() -> Option<crate::session::Capabilities> {
+    CONTEXT
+        .try_with(|context| {
+            context
+                .session
+                .as_ref()
+                .and_then(|session| session.upgrade())
+                .map(|session| session.capabilities())
+        })
+        .ok()
+        .flatten()
+}
+
 /// Returns true if the current task runs within a call whose cancellation has been requested.
 ///
 /// Returns false when not running within a call.

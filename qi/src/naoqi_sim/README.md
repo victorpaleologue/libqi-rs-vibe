@@ -12,7 +12,7 @@ for tests) are provided.
 ## Running
 
 ```text
-naoqi-sim [--robot nao|pepper] [--version M.m.p.b] [--name NAME]
+naoqi-sim [--robot nao|pepper] [--version M.m.p.b] [--name NAME] [--protocol legacy|standard]
           [--listen URL]... [--password PW] [--script FILE] [-v]...
 ```
 
@@ -21,6 +21,7 @@ naoqi-sim [--robot nao|pepper] [--version M.m.p.b] [--name NAME]
 | `--robot` | `nao` | The robot model: `nao` (V6) or `pepper` (1.8). |
 | `--version` | `2.8.7.4` (NAO), `2.9.5.1` (Pepper) | The NAOqi version `ALSystem.systemVersion` reports. `naoqi_driver2` selects code paths on `< 2.8` and `< 2.9`. |
 | `--name` | `naoqi-sim` | The robot name (`ALSystem.robotName`). |
+| `--protocol` | from `--version` | The protocol variant: `legacy` is the one of NAOqi 2.1 robots (no authentication, capabilities advertised with a message on connection, no cancellation nor object UIDs), `standard` the one of NAOqi 2.3 and later. A version below 2.3 selects `legacy`. No password can be required with `legacy`. |
 | `--listen` | `tcp://0.0.0.0:9559` (+ `tcps://0.0.0.0:9503` with a password) | An address to listen on: `tcp://` or `tcps://` (TLS). Repeatable. |
 | `--password` | none | Enables authentication of the `nao` user with this password (`auth_user` / `auth_token` capabilities). Without it every connection is accepted. |
 | `--script` | none | A scenario script run once started (`-` reads the standard input), see below. |

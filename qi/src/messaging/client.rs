@@ -2,6 +2,7 @@ use crate::messaging::{
     handler::Reply,
     id::CreateId,
     message::{Address, Flags, Id, Response},
+    value::KeyDynValueMap,
     Error, Message,
 };
 use bytes::Bytes;
@@ -99,6 +100,23 @@ impl Client {
             .map_err(client_dissociated_with_endpoint_error)
     }
 
+    /// Advertises capabilities to the peer with a capabilities message.
+    pub async fn send_capabilities(&self, capabilities: KeyDynValueMap) -> Result<(), Error> {
+        self.requests
+            .send(Request::Capabilities { capabilities })
+            .await
+            .map_err(client_dissociated_with_endpoint_error)
+    }
+
+    /// Tries to advertise capabilities to the peer without waiting.
+    ///
+    /// Fails if the requests buffer is full or if the client is dissociated with its endpoint.
+    pub fn try_send_capabilities(&self, capabilities: KeyDynValueMap) -> Result<(), Error> {
+        self.requests
+            .try_send(Request::Capabilities { capabilities })
+            .map_err(client_dissociated_with_endpoint_error)
+    }
+
     /// Tries to send an event notification without waiting.
     ///
     /// Fails if the requests buffer is full or if the client is dissociated with its endpoint.
@@ -169,6 +187,9 @@ enum Request {
         address: Address,
         payload: Bytes,
         flags: Flags,
+    },
+    Capabilities {
+        capabilities: KeyDynValueMap,
     },
 }
 
@@ -302,6 +323,13 @@ impl Stream for Requests {
                             address,
                             payload,
                             flags,
+                        },
+                        // Capabilities messages are addressed to the server object, like the
+                        // reference implementation does.
+                        Request::Capabilities { capabilities } => Message::Capabilities {
+                            id,
+                            address: Address::default(),
+                            capabilities,
                         },
                     };
                     Poll::Ready(Some(message))

@@ -106,6 +106,34 @@ the authentication state. The capabilities shared by both sides (`ClientServerSo
 `MetaObjectCache` is never enabled) drive the protocol variants, notably whether
 object references carry the 20-byte object UID.
 
+### Protocol variants
+
+Two generations of the protocol exist, with the same binary format and messages
+(`session::Protocol`). The *standard* one (`libqi` 2.3 and later, NAOqi 2.3 to 2.9) is the
+handshake above. The *legacy* one (`libqi` up to 2.2, NAOqi 2.1 robots) has no
+authentication: both ends advertise their capabilities with a `Capabilities` message right after
+the connection, a server answers the authentication call with an error, and a client sends its
+requests directly. Sessions detect the variant of their peer like `libqi` 2.3+ does:
+
+- the connecting side sends the authentication call; an error reply preceded by a
+  `Capabilities` message of the peer means a legacy server (an error without it is a refused
+  authentication), and the local capabilities are then advertised with a `Capabilities`
+  message. Credentials cannot be verified by a legacy server, so giving some is an error;
+- the accepting side, when no authenticator is set, takes a first request that is not the
+  authentication call as coming from a legacy client, authorizes it and advertises its
+  capabilities.
+
+The capabilities shared with a legacy peer are those it advertises (`ClientServerSocket`,
+`MessageFlags`; the `MetaObjectCache` is never shared), so object references carry no UID and
+calls cannot be canceled. Two more adaptations follow from what the old type system lacks:
+service infos are advertised and written without their `objectUid` field to peers without the
+`ObjectPtrUID` capability (and read in both forms), and the members whose signatures a legacy
+peer cannot parse (optionals `+`, variadic parameters `#`) are left out of the meta objects sent
+to it. A node can also *emulate* a legacy server (`with_server_protocol(Protocol::Legacy)`,
+`naoqi-sim --protocol legacy` or a NAOqi version below 2.3), to test clients against the
+handshake of NAOqi 2.1. The protocol of a peer is readable on its proxies
+(`ObjectClient::protocol`) and on the service directory client.
+
 ### Special bound-object actions
 
 Every object reachable through a session answers the special actions below 100 like
@@ -191,7 +219,9 @@ harness is not built).
   typed structures keep it). `libqi` accepts both.
 - The `Manageable` members `libqi` adds to every object (statistics and tracing,
   identifiers 80 to 86) are not exposed.
-- `MetaObjectCache` is never negotiated (like `libqi` by default).
+- `MetaObjectCache` is never negotiated (like `libqi` by default; `libqi` 2.1 advertises it,
+  and two 2.1 processes transmit object references through it, in a form this implementation
+  does not decode: it only ever receives the plain form, as it never advertises the cache).
 - Machine identifiers follow `libqi`'s file-based scheme (`~/.config/qimessaging/machine_id`),
   then the systemd machine id hashed with `libqi`'s salt; a `libqi` built with
   systemd support uses the latter first.

@@ -14,7 +14,7 @@ mod host;
 mod store;
 mod target;
 
-pub use self::capabilities::Capabilities;
+pub use self::capabilities::{Capabilities, Protocol};
 pub(crate) use self::store::Store;
 pub use self::target::Target;
 use self::{control::Control, handler::SessionHandler, host::ObjectHost};
@@ -51,6 +51,8 @@ use tracing::{debug, trace};
 pub(crate) struct SessionState {
     client: messaging::Client,
     capabilities: watch::Receiver<Option<Capabilities>>,
+    /// The protocol variant of the peer, once detected.
+    protocol: watch::Receiver<Option<Protocol>>,
     /// Objects transmitted to the peer.
     host: Mutex<ObjectHost>,
     /// Subscriptions of the peer to signals of local objects.
@@ -77,6 +79,11 @@ impl SessionState {
     /// The capabilities shared with the peer. Before negotiation, no capability is assumed.
     pub(crate) fn capabilities(&self) -> Capabilities {
         self.capabilities.borrow().unwrap_or(Capabilities::NONE)
+    }
+
+    /// The protocol variant the peer speaks, if detected yet.
+    pub(crate) fn protocol(&self) -> Option<Protocol> {
+        *self.protocol.borrow()
     }
 
     fn weak_session(&self) -> WeakSession {
@@ -269,6 +276,7 @@ impl Session {
             messages_in,
             messages_out,
             None,
+            Protocol::Standard,
             true,
             services,
             host::CLIENT_FIRST_ID,
@@ -280,10 +288,13 @@ impl Session {
     }
 
     /// Starts the messaging of a session, without authentication.
+    ///
+    /// `server_protocol` is the protocol this side speaks when it is the accepting side.
     fn start<MsgStream, MsgSink>(
         messages_in: MsgStream,
         messages_out: MsgSink,
         authenticator: Option<Arc<dyn Authenticator + Send + Sync>>,
+        server_protocol: Protocol,
         remote_authorized: bool,
         services: SharedServices,
         first_hosted_id: u32,
@@ -301,8 +312,15 @@ impl Session {
             let Control {
                 controller: control,
                 capabilities,
+                protocol,
                 handler,
-            } = control::create(handler, authenticator, remote_authorized);
+            } = control::create(
+                handler,
+                authenticator,
+                server_protocol,
+                remote_authorized,
+                WeakSession(Weak::clone(weak)),
+            );
             let (client, connection) =
                 messaging::endpoint::start(messages_in, messages_out, handler);
             task::spawn({
@@ -316,6 +334,7 @@ impl Session {
             SessionState {
                 client,
                 capabilities,
+                protocol,
                 host: Mutex::new(ObjectHost::new(first_hosted_id)),
                 event_links: Default::default(),
                 subscriptions: Default::default(),
@@ -330,6 +349,11 @@ impl Session {
     /// The capabilities shared with the peer.
     pub(crate) fn capabilities(&self) -> Capabilities {
         self.0.capabilities()
+    }
+
+    /// The protocol variant the peer speaks, if detected yet.
+    pub(crate) fn protocol(&self) -> Option<Protocol> {
+        self.0.protocol()
     }
 
     /// Calls a member of an object of the peer with a tuple of arguments, and returns its
@@ -601,6 +625,7 @@ impl std::fmt::Debug for WeakSession {
 pub(crate) async fn server(
     address: messaging::Address,
     authenticator: Option<Arc<dyn Authenticator + Send + Sync>>,
+    protocol: Protocol,
     services: SharedServices,
 ) -> std::result::Result<(Server, ServerEndpointsWatcher), std::io::Error> {
     let (clients, local_address) = messaging::channel::serve(address).await?;
@@ -621,6 +646,7 @@ pub(crate) async fn server(
                         messages_stream,
                         messages_sink,
                         authenticator.clone(),
+                        protocol,
                         services.clone(),
                     ));
                 }
@@ -639,10 +665,14 @@ pub(crate) async fn server(
 
 /// Serves a client of a session server: establishes the session as the accepting side and keeps
 /// it alive until the link is closed.
+///
+/// With the legacy protocol, the server advertises its capabilities as soon as the client is
+/// connected, like `libqi` 2.1 servers do.
 pub(crate) async fn serve_client<MsgStream, MsgSink>(
     messages_stream: MsgStream,
     messages_sink: MsgSink,
     authenticator: Option<Arc<dyn Authenticator + Send + Sync>>,
+    protocol: Protocol,
     services: SharedServices,
 ) where
     MsgStream: TryStream<Ok = messaging::Message> + Send + 'static,
@@ -650,14 +680,18 @@ pub(crate) async fn serve_client<MsgStream, MsgSink>(
     MsgSink: Sink<messaging::Message> + Send + 'static,
     MsgSink::Error: Send,
 {
-    let (session, _controller) = Session::start(
+    let (session, controller) = Session::start(
         messages_stream,
         messages_sink,
         authenticator,
+        protocol,
         false,
         services,
         host::SERVER_FIRST_ID,
     );
+    if protocol == Protocol::Legacy {
+        controller.advertise_capabilities(&session.0.client).await;
+    }
     session.0.closed.cancelled().await;
 }
 
@@ -770,6 +804,7 @@ mod tests {
             server_recv.map(Ok::<_, Infallible>),
             server_send.sink_map_err(crate::messaging::Error::link_lost),
             Some(Arc::new(auth)),
+            Protocol::Standard,
             SharedServices::default(),
         ));
 
@@ -830,6 +865,7 @@ mod tests {
             server_recv.map(Ok::<_, Infallible>),
             server_send.sink_map_err(crate::messaging::Error::link_lost),
             Some(Arc::new(auth)),
+            Protocol::Standard,
             SharedServices::default(),
         ));
 
@@ -880,6 +916,7 @@ mod tests {
             client_to_server_rx.map(Ok::<_, Infallible>),
             server_to_client_tx.sink_map_err(crate::messaging::Error::link_lost),
             None,
+            Protocol::Standard,
             SharedServices::default(),
         ));
         let session = Session::connect(
@@ -891,5 +928,150 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(session.capabilities(), Capabilities::LOCAL);
+        assert_eq!(session.protocol(), Some(Protocol::Standard));
+    }
+
+    /// A client connects to a server that emulates the legacy protocol: the server advertises
+    /// its capabilities first and rejects the authentication call, and the client detects the
+    /// legacy protocol and advertises its own capabilities.
+    #[tokio::test]
+    async fn client_detects_a_legacy_server() {
+        let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded();
+        let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
+        spawn(serve_client(
+            client_to_server_rx.map(Ok::<_, Infallible>),
+            server_to_client_tx.sink_map_err(crate::messaging::Error::link_lost),
+            None,
+            Protocol::Legacy,
+            SharedServices::default(),
+        ));
+        let session = Session::connect(
+            server_to_client_rx.map(Ok::<_, Infallible>),
+            client_to_server_tx.sink_map_err(crate::messaging::Error::link_lost),
+            Default::default(),
+            SharedServices::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(session.protocol(), Some(Protocol::Legacy));
+        assert_eq!(session.capabilities(), Capabilities::LEGACY_LOCAL);
+    }
+
+    /// With credentials, a legacy server is an error: it cannot verify them.
+    #[tokio::test]
+    async fn credentials_are_refused_by_a_legacy_server() {
+        let (client_to_server_tx, client_to_server_rx) = mpsc::unbounded();
+        let (server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
+        spawn(serve_client(
+            client_to_server_rx.map(Ok::<_, Infallible>),
+            server_to_client_tx.sink_map_err(crate::messaging::Error::link_lost),
+            None,
+            Protocol::Legacy,
+            SharedServices::default(),
+        ));
+        let mut credentials = KeyDynValueMap::new();
+        credentials.set(auth::USER_KEY, "nao");
+        credentials.set(auth::TOKEN_KEY, "secret");
+        let error = Session::connect(
+            server_to_client_rx.map(Ok::<_, Infallible>),
+            client_to_server_tx.sink_map_err(crate::messaging::Error::link_lost),
+            credentials,
+            SharedServices::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("legacy protocol"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// An error reply to the authentication call that no capabilities message preceded is a
+    /// refusal from a standard server, not a legacy server.
+    #[tokio::test]
+    async fn authentication_refusal_is_not_mistaken_for_a_legacy_server() {
+        let (client_to_server_tx, mut client_to_server_rx) = mpsc::unbounded();
+        let (mut server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
+        spawn(async move {
+            let call: Message = client_to_server_rx.next().await.unwrap();
+            let id = call.id();
+            server_to_client_tx
+                .send(Message::Error {
+                    id,
+                    address: control::AUTHENTICATE_ADDRESS,
+                    error: "bad token".to_owned(),
+                })
+                .await
+                .unwrap();
+        });
+        let error = Session::connect(
+            server_to_client_rx.map(Ok::<_, Infallible>),
+            client_to_server_tx.sink_map_err(crate::messaging::Error::link_lost),
+            Default::default(),
+            SharedServices::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refused the authentication: bad token"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A legacy client sends a request before any authentication, then its capabilities: the
+    /// server answers the request, advertises its capabilities and records the client's.
+    #[tokio::test]
+    async fn server_accepts_a_legacy_client() {
+        let (mut send_to_server, server_recv) = mpsc::unbounded();
+        let (server_send, mut recv_from_server) = mpsc::unbounded();
+        spawn(serve_client(
+            server_recv.map(Ok::<_, Infallible>),
+            server_send.sink_map_err(crate::messaging::Error::link_lost),
+            None,
+            Protocol::Standard,
+            SharedServices::default(),
+        ));
+        // A libqi 2.1 client fetches the meta object of the service directory before its
+        // capabilities message gets sent.
+        let meta_object_address = message::Address(
+            service::Id(1),
+            object::MAIN_OBJECT_ID,
+            object::generic::META_OBJECT,
+        );
+        send_to_server
+            .send(Message::Call {
+                id: message::Id(3),
+                address: meta_object_address,
+                payload: (0u32,).into_format().unwrap(),
+                flags: Flags::NONE,
+            })
+            .await
+            .unwrap();
+        send_to_server
+            .send(Message::Capabilities {
+                id: message::Id(2),
+                address: Default::default(),
+                capabilities: capabilities::legacy_local_map().clone(),
+            })
+            .await
+            .unwrap();
+        let mut got_capabilities = false;
+        let mut got_reply = false;
+        while !(got_capabilities && got_reply) {
+            match recv_from_server.next().await.unwrap() {
+                Message::Capabilities { capabilities, .. } => {
+                    assert_eq!(Capabilities::from_map(&capabilities), Capabilities::LOCAL);
+                    got_capabilities = true;
+                }
+                // There is no service 1 on this server: the call is answered with an error,
+                // not ignored.
+                Message::Error {
+                    id: message::Id(3), ..
+                } => got_reply = true,
+                message => panic!("unexpected message {message:?}"),
+            }
+        }
     }
 }

@@ -78,3 +78,44 @@ device (HAL, behavior leaves, default tree) on the Arora runtime; its runner cro
 for the NAO (`i686-unknown-linux-musl`). Its probe example was run against `naoqi-sim`:
 description, joint states, battery, inertial unit and sonar keys flow in; joint targets,
 speech and LEDs flow out.
+
+## NAOqi 2.1 (the libqi of 2014)
+
+NAOqi 2.1 robots run the `libqi` of 2014, whose protocol has no authentication, fewer
+capabilities and six-field service infos. That stack (core `v2.1.3`, `libqitype` and
+`libqimessaging` at the commits of June 2014 that fed the 2.1 release) was built in an Ubuntu
+14.04 container, and the harness was ported to its API: [`interop/cpp21/`](../interop/cpp21/README.md)
+describes the build, the port and every protocol difference found. In short, every shared value
+is byte-identical with 4.0.5 (`interop/vectors/libqi-2.1-values.jsonl`, compared with the 4.0.5
+fixture by `qi/tests/libqi21_vectors.rs`); what differs is the handshake, the capability set,
+`ServiceInfo` (no `objectUid`), and what the type system lacks (optionals, cancellation, object
+UIDs).
+
+The Rust side detects the protocol of each peer when the session is established
+(`qi::Protocol`): a `Capabilities` message followed by an error reply to the authentication
+call means a legacy server; a first request that is not the authentication call means a legacy
+client. `qi/tests/interop_cpp21.rs` then runs, over TCP loopback:
+
+| Service directory | Service | Client | Result |
+|---|---|---|---|
+| Rust | Rust | 2.1 (`qi-cpp-client`, 28 scenarios) | all pass |
+| Rust emulating 2.1 (`Protocol::Legacy`) | Rust | 2.1 | all pass |
+| 2.1 | 2.1 | Rust | all scenarios pass (minus optionals and cancellation, plus the ALMemory subscriber pattern) |
+| 2.1 | Rust | 2.1 | all pass |
+| Rust | 2.1 | Rust | all scenarios pass |
+| `naoqi-sim --version 2.1.4.13` | | 2.1 (`qi-cpp-naoqi-probe`) | `systemVersion`, `getData`, `subscriber` + `raiseEvent` events, `say`, `getAngles` pass |
+
+and `interop_cpp.rs` runs the 4.0.5 client against the Rust emulation of a 2.1 server (its own
+compatibility code for old servers): all its scenarios but cancellation and optionals pass.
+
+Three findings drove the implementation: a 2.1 process cannot convert a seven-field
+`ServiceInfo` (the service directory advertises and writes the six-field form to peers without
+the `ObjectPtrUID` capability, and reads both); a 2.1 process fails to fetch a meta object with
+an optional or variadic signature (`Invalid signature`), so those members are hidden from legacy
+peers; and when a client forces a return signature the value cannot convert to, the reply is
+sent with the declared type like `libqi` does, rather than as a dynamic that would lose the
+structure annotations the client needs.
+
+Not reproduced here: a real NAOqi 2.1 (`naoqi-bin` and its C++ modules such as `ALMemory`),
+whose SDK is no longer downloadable; the 2.1 `ALMemory.subscriber` pattern is exercised with an
+equivalent service of the harness.

@@ -11,8 +11,9 @@ robots (`libqi`, also known as qimessaging), byte-compatible with the C++ implem
 With it, Rust programs talk to NAOqi robots and to any `libqi` process: they call
 services, subscribe to signals, read and write properties, expose their own services and
 objects, or even host a service directory. The wire format is verified byte for byte
-against `libqi` 4.0.5, and the implementation is exercised against C++ `libqi` processes
-as client, service and service directory.
+against `libqi` 4.0.5 and against the `libqi` of NAOqi 2.1, and the implementation is
+exercised against C++ `libqi` processes of both generations as client, service and service
+directory.
 
 This is a fork of [libqi-rs](https://github.com/nyibbang/libqi-rs) by Vincent Palancher,
 completed into a full stack.
@@ -89,6 +90,9 @@ Implemented and tested against `libqi` 4.0.5:
 - services and a standalone service directory with its signals and relative endpoints;
 - callbacks in both NAOqi styles: object passing, and services calling back services
   registered by their clients.
+- the legacy protocol of NAOqi 2.1 (`libqi` 2014: no authentication, capabilities message),
+  detected at connection and emulated on demand, validated against that `libqi` built from
+  source (`interop/cpp21/`).
 
 Not implemented yet: mutual TLS authentication (`tcpsm://`), the `Manageable` statistics
 and tracing members, and gateways. Known gaps and follow-ups are listed in
@@ -105,10 +109,12 @@ qi-cli --url tcp://nao.local:9559 call ALMemory.getData Device/SubDeviceList/Bat
 ```
 
 `naoqi-sim` runs a simulated NAO or Pepper that `libqi` clients (the ROS 2 `naoqi_driver2`
-included) connect to as to a real robot:
+included) connect to as to a real robot; with a NAOqi version below 2.3 (or `--protocol
+legacy`) it speaks the protocol of NAOqi 2.1:
 
 ```sh
 naoqi-sim --robot nao --listen tcp://0.0.0.0:9559
+naoqi-sim --robot nao --version 2.1.4.13     # the handshake of a NAOqi 2.1 robot
 ```
 
 From a checkout, prefix the commands with
@@ -122,9 +128,10 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-The interoperability tests against C++ `libqi` (`qi/tests/interop_cpp.rs`) run when the
-harness in [`interop/cpp/`](interop/cpp/) is built (see its README); they are skipped
-otherwise, and `QI_INTEROP_REQUIRE=1` makes skipping an error.
+The interoperability tests against C++ `libqi` (`qi/tests/interop_cpp.rs` for 4.0.5,
+`qi/tests/interop_cpp21.rs` for the `libqi` of NAOqi 2.1) run when the harnesses in
+[`interop/cpp/`](interop/cpp/) and [`interop/cpp21/`](interop/cpp21/) are built (see their
+READMEs); they are skipped otherwise, and `QI_INTEROP_REQUIRE=1` makes skipping an error.
 
 Releases are described in [`CHANGELOG.md`](CHANGELOG.md) and made as explained in
 [`docs/releasing.md`](docs/releasing.md).

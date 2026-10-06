@@ -26,7 +26,7 @@ use crate::{
     object::{self, AnyObject, ObjectClient},
     service::{self, Info},
     service_directory::{self, ServiceDirectory},
-    session,
+    session::{self, Protocol},
     value::os::MachineId,
     Address, Error, Object, Result,
 };
@@ -47,6 +47,7 @@ pub fn init() -> InitializingNode<NotSet> {
 pub struct InitializingNode<Method> {
     uid: Uid,
     authenticator: Option<Arc<dyn Authenticator + Send + Sync>>,
+    server_protocol: Protocol,
     bind_addresses: Vec<Address>,
     pending_services: Vec<(String, AnyObject)>,
     services: service::SharedServices,
@@ -62,6 +63,18 @@ impl<Method> InitializingNode<Method> {
         authenticator: Arc<dyn Authenticator + Send + Sync>,
     ) -> &mut Self {
         self.authenticator = Some(authenticator);
+        self
+    }
+
+    /// Sets the protocol variant the servers of the node speak to the nodes connecting to them.
+    ///
+    /// Servers speak the [standard](Protocol::Standard) protocol by default and accept clients
+    /// of both variants. With [`Protocol::Legacy`], they emulate the servers of NAOqi 2.1: the
+    /// authentication call is rejected like `libqi` 2.1 does and the capabilities are advertised
+    /// with a message on connection, so that clients can be tested against that handshake. No
+    /// authenticator can be enforced then.
+    pub fn with_server_protocol(&mut self, protocol: Protocol) -> &mut Self {
+        self.server_protocol = protocol;
         self
     }
 
@@ -101,6 +114,7 @@ impl<Method> InitializingNode<Method> {
         InitializingNode {
             uid: self.uid,
             authenticator: self.authenticator,
+            server_protocol: self.server_protocol,
             services: self.services,
             bind_addresses: self.bind_addresses,
             pending_services: self.pending_services,
@@ -116,6 +130,7 @@ impl<Method> InitializingNode<Method> {
         InitializingNode {
             uid: self.uid,
             authenticator: self.authenticator,
+            server_protocol: self.server_protocol,
             services: self.services,
             bind_addresses: self.bind_addresses,
             pending_services: self.pending_services,
@@ -133,9 +148,13 @@ where
     /// registers the services.
     pub async fn start(self) -> Result<Node<M::ServiceDirectory>> {
         let services = self.services;
-        let (server_set, mut endpoints_watcher) =
-            server::start_servers(services.clone(), self.authenticator, self.bind_addresses)
-                .await?;
+        let (server_set, mut endpoints_watcher) = server::start_servers(
+            services.clone(),
+            self.authenticator,
+            self.server_protocol,
+            self.bind_addresses,
+        )
+        .await?;
         let session_store = session::Store::new(services.clone());
         let server_endpoints = endpoints_to_client_targets(&endpoints_watcher.borrow_and_update());
         let service_directory = self

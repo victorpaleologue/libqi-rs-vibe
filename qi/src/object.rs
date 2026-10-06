@@ -28,7 +28,7 @@ use crate::{
     messaging::message,
     property::Property,
     service,
-    session::Session,
+    session::{Capabilities, Protocol, Session},
     signal::{Signal, Subscription, ValueStream},
     value::{self, Dynamic, FromValue, FromValueError, IntoValue, Reflect, RuntimeReflect, Value},
     Error, Result,
@@ -390,6 +390,17 @@ impl ObjectClient {
     /// The identifier of the service the object belongs to.
     pub fn service_id(&self) -> service::Id {
         self.0.service_id
+    }
+
+    /// The protocol variant the peer hosting the object speaks, detected when the session to it
+    /// was established.
+    pub fn protocol(&self) -> Option<Protocol> {
+        self.0.session.protocol()
+    }
+
+    /// The capabilities shared with the peer hosting the object.
+    pub fn capabilities(&self) -> Capabilities {
+        self.0.session.capabilities()
     }
 
     /// The identifier of the object within its service.

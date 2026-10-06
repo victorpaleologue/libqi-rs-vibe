@@ -11,7 +11,7 @@ use crate::naoqi_sim::{
 };
 use qi::{
     auth::UserTokenAuthenticator, node::Node, service, service_directory::LocalServiceDirectory,
-    Address,
+    Address, Protocol,
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -39,6 +39,9 @@ pub struct Config {
     pub listen: Vec<Address>,
     /// The password of the `nao` user; without it, every connection is accepted.
     pub password: Option<String>,
+    /// The protocol variant the robot speaks; the one of its NAOqi version if `None` (legacy for
+    /// NAOqi 2.1 and earlier).
+    pub protocol: Option<Protocol>,
     /// The period of the simulation of the body.
     pub tick_period: Duration,
     /// The period of the heartbeat log messages.
@@ -56,6 +59,7 @@ impl Default for Config {
                 ssl: None,
             }],
             password: None,
+            protocol: None,
             tick_period: Duration::from_millis(20),
             heartbeat_period: Duration::from_secs(5),
         }
@@ -104,11 +108,24 @@ impl Config {
         self
     }
 
+    /// Speaks the given protocol variant, whatever the NAOqi version.
+    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = Some(protocol);
+        self
+    }
+
     /// The NAOqi version the robot reports.
     pub fn resolved_version(&self) -> String {
         self.version
             .clone()
             .unwrap_or_else(|| self.robot.default_version().to_owned())
+    }
+
+    /// The protocol variant the robot speaks: the configured one, or the one of its NAOqi
+    /// version.
+    pub fn resolved_protocol(&self) -> Protocol {
+        self.protocol
+            .unwrap_or_else(|| Protocol::of_naoqi_version(&self.resolved_version()))
     }
 }
 
@@ -136,11 +153,20 @@ impl Simulator {
         let body = Body::new(description, memory.clone());
         let logs = LogHub::new();
 
+        let protocol = config.resolved_protocol();
         let mut init = qi::node::init();
+        init.with_server_protocol(protocol);
         for address in &config.listen {
             init.bind(*address);
         }
         if let Some(password) = &config.password {
+            if protocol == Protocol::Legacy {
+                return Err(qi::Error::Other(
+                    "the legacy protocol (NAOqi 2.1) has no authentication: no password can be \
+                     required"
+                        .into(),
+                ));
+            }
             init.with_authenticator(Arc::new(UserTokenAuthenticator::new(
                 AUTH_USER.to_owned(),
                 password.clone(),
@@ -172,7 +198,7 @@ impl Simulator {
         logs.info(
             "naoqi-sim",
             format!(
-                "{} robot \"{}\" running NAOqi {version} with {} services",
+                "{} robot \"{}\" running NAOqi {version} ({protocol} protocol) with {} services",
                 config.robot.body_type(),
                 config.name,
                 service_ids.len()
@@ -202,6 +228,11 @@ impl Simulator {
     /// The NAOqi version the robot reports.
     pub fn version(&self) -> &str {
         &self.context.version
+    }
+
+    /// The protocol variant the robot speaks.
+    pub fn protocol(&self) -> Protocol {
+        self.config.resolved_protocol()
     }
 
     /// The time elapsed since the start of the simulator.
