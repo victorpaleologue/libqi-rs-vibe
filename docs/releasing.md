@@ -18,7 +18,7 @@ A release is a git tag `vX.Y.Z` on `main` whose version equals the workspace ver
 ```sh
 # 1. Bump the version (one number for the whole workspace) and the changelog.
 sed -i 's/^version = ".*"/version = "0.2.0"/' Cargo.toml            # [workspace.package]
-sed -i 's/version = "0.1.0" }/version = "0.2.0" }/' Cargo.toml       # the workspace crates
+sed -i 's/version = "0.1.0" }/version = "0.2.0" }/' qi/Cargo.toml    # libqi-macros-vibe, as libqi-vibe depends on it
 $EDITOR CHANGELOG.md                                                 # move Unreleased under ## [0.2.0] - date
 cargo update --workspace                                             # refresh Cargo.lock
 cargo test --workspace && cargo publish --workspace --dry-run
