@@ -75,7 +75,7 @@ jobs:
               cp "target/${{ matrix.target }}/release/$bin" "$name/"
             fi
           done
-          cp LICENSE.txt README.md "$name/"
+          cp LICENSE README.md "$name/"
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a "$name.zip" "$name" > /dev/null
             echo "asset=$name.zip" >> "$GITHUB_ENV"
