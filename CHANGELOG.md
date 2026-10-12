@@ -9,6 +9,10 @@ released together.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-12
+
+NAOqi 2.1 robots, characterized against a NAO V4 running NAOqi 2.1.4.13.
+
 ### Added
 
 - Compatibility with NAOqi 2.1 robots (the `libqi` of 2014): the protocol variant of a peer is
@@ -88,5 +92,6 @@ See `docs/issues/`: no mutual TLS (`tcpsm://`), no `Manageable` statistics membe
 gateway mode, posts are not flushed at shutdown, and two pinned byte-level deviations in the
 runtime `Value` model (invalid dynamics, structure annotations inside dynamics).
 
-[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/victorpaleologue/libqi-rs-vibe/releases/tag/v0.1.0

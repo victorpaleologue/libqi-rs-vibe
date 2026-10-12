@@ -22,7 +22,7 @@ completed into a full stack.
 
 ```toml
 [dependencies]
-qi = { package = "libqi-vibe", version = "0.1" }   # used as `qi` in code
+qi = { package = "libqi-vibe", version = "0.2" }   # used as `qi` in code
 ```
 
 The package is `libqi-vibe` on crates.io (the name `qi` is taken); the library itself is
