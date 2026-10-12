@@ -3,7 +3,8 @@ name: Release
 # A release is a tag `vX.Y.Z` matching the workspace version. The workflow checks the
 # version, runs the tests, builds the binaries (qi-cli, naoqi-sim) for every supported
 # target, publishes a GitHub release with them and the changelog section, then publishes
-# the crates that are not on crates.io yet (needs the CARGO_REGISTRY_TOKEN secret).
+# the crates that are not on crates.io yet, through crates.io's trusted publishing (no
+# stored token: the job exchanges GitHub's OIDC token for a short-lived crates.io one).
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
@@ -128,13 +129,19 @@ jobs:
     needs: [check, github-release]
     runs-on: ubuntu-latest
     environment: crates.io
+    permissions:
+      contents: read
+      # Trusted publishing: GitHub's OIDC token, exchanged for a crates.io token.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
       - name: Publish the crates missing from crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -eu
           version="${{ needs.check.outputs.version }}"

@@ -9,8 +9,9 @@ A release is a git tag `vX.Y.Z` on `main` whose version equals the workspace ver
    Windows (x86_64), and attaches the archives and their checksums to a GitHub release
    whose notes are the changelog section;
 3. publishes to crates.io the crates of the workspace that are not there yet at that
-   version, in dependency order (`libqi-macros-vibe`, then `libqi-vibe`), using the `CARGO_REGISTRY_TOKEN` secret of the
-   `crates.io` environment. Crates already published at that version are skipped, so the
+   version, in dependency order (`libqi-macros-vibe`, then `libqi-vibe`), through crates.io's
+   trusted publishing: the job, in the `crates.io` environment, exchanges GitHub's OIDC
+   token for a short-lived crates.io token; no token is stored. Crates already published at that version are skipped, so the
    workflow can be re-run and the first release can be published by hand.
 
 ## Every release
@@ -34,11 +35,11 @@ be fixed and re-run from the Actions tab; the crates.io step never publishes twi
 
 ## One-time setup
 
-- **crates.io token.** Create an API token on <https://crates.io/settings/tokens> scoped to
-  `publish-new` and `publish-update` (and, when the crates exist, restrict it to them).
-  Store it as the secret `CARGO_REGISTRY_TOKEN` of a GitHub environment named `crates.io`
-  (Settings, Environments): the environment lets you require a manual approval before the
-  publish job runs.
+- **Trusted publishing.** On crates.io, in the settings of each crate (`libqi-vibe`,
+  `libqi-macros-vibe`), add a trusted publisher: this repository, the workflow
+  `release.yml`, the environment `crates.io`. In GitHub, create the environment `crates.io`
+  (Settings, Environments): it lets you require a manual approval before the publish job
+  runs. No API token is stored.
 - **Runners.** The matrix uses the `ubuntu-24.04-arm` and `macos-15-intel` hosted runners,
   free for public repositories. On a private repository, drop those two targets or replace
   them with cross-compilation.
