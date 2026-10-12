@@ -2,14 +2,14 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crates follow
-[Semantic Versioning](https://semver.org/): until 1.0, minor versions may break the API.
+[Semantic Versioning](https://semver.org/): a change that breaks the API is a major version.
 
 The two crates, `libqi-vibe` and `libqi-macros-vibe`, share one version number and are
 released together.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-12
+## [1.0.0] - 2026-10-12
 
 NAOqi 2.1 robots, characterized against a NAO V4 running NAOqi 2.1.4.13.
 
@@ -92,6 +92,6 @@ See `docs/issues/`: no mutual TLS (`tcpsm://`), no `Manageable` statistics membe
 gateway mode, posts are not flushed at shutdown, and two pinned byte-level deviations in the
 runtime `Value` model (invalid dynamics, structure annotations inside dynamics).
 
-[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/victorpaleologue/libqi-rs-vibe/releases/tag/v0.1.0
