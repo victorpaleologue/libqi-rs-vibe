@@ -111,6 +111,18 @@ impl<Method> InitializingNode<Method> {
         address: Address,
         credentials: Option<KeyDynValueMap>,
     ) -> InitializingNode<ConnectToSpace> {
+        self.connect_to_space_at([address], credentials)
+    }
+
+    /// Attaches the node to the space hosted at the first of the addresses that answers, tried
+    /// in order: the addresses a host name resolves to ([`Address::resolve_all`]), of which
+    /// some may be unreachable (an IPv6 address on a network that routes only IPv4, a robot
+    /// listening on IPv4 only).
+    pub fn connect_to_space_at(
+        self,
+        addresses: impl IntoIterator<Item = Address>,
+        credentials: Option<KeyDynValueMap>,
+    ) -> InitializingNode<ConnectToSpace> {
         InitializingNode {
             uid: self.uid,
             authenticator: self.authenticator,
@@ -119,7 +131,7 @@ impl<Method> InitializingNode<Method> {
             bind_addresses: self.bind_addresses,
             pending_services: self.pending_services,
             method: ConnectToSpace {
-                address,
+                addresses: addresses.into_iter().collect(),
                 credentials,
             },
         }
@@ -492,7 +504,7 @@ pub struct NotSet;
 /// Connect to the space hosted by another node.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConnectToSpace {
-    address: Address,
+    addresses: Vec<Address>,
     credentials: Option<KeyDynValueMap>,
 }
 
@@ -508,7 +520,10 @@ impl Method for ConnectToSpace {
             .store
             .get_or_create(
                 service_directory::SD_SERVICE_NAME,
-                [self.address.into()],
+                self.addresses
+                    .into_iter()
+                    .map(session::Target::from)
+                    .collect::<Vec<_>>(),
                 self.credentials.unwrap_or_default(),
             )
             .await?;

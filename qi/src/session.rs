@@ -1020,6 +1020,46 @@ mod tests {
         );
     }
 
+    /// NAOqi 2.1 advertises its capabilities from another thread than the one answering the
+    /// authentication call: the advertisement may come right after the error reply. The client
+    /// still recognizes a legacy server.
+    #[tokio::test]
+    async fn client_detects_a_legacy_server_advertising_after_its_error() {
+        let (client_to_server_tx, mut client_to_server_rx) = mpsc::unbounded();
+        let (mut server_to_client_tx, server_to_client_rx) = mpsc::unbounded();
+        spawn(async move {
+            let call: Message = client_to_server_rx.next().await.unwrap();
+            server_to_client_tx
+                .send(Message::Error {
+                    id: call.id(),
+                    address: control::AUTHENTICATE_ADDRESS,
+                    error: "can't find service, address: {0.0.8, id:1}".to_owned(),
+                })
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            server_to_client_tx
+                .send(Message::Capabilities {
+                    id: message::Id(1),
+                    address: Default::default(),
+                    capabilities: capabilities::legacy_local_map().clone(),
+                })
+                .await
+                .unwrap();
+            // Keep the link open for the client's own advertisement.
+            while client_to_server_rx.next().await.is_some() {}
+        });
+        let session = Session::connect(
+            server_to_client_rx.map(Ok::<_, Infallible>),
+            client_to_server_tx.sink_map_err(crate::messaging::Error::link_lost),
+            Default::default(),
+            SharedServices::default(),
+        )
+        .await
+        .expect("a legacy server is recognized");
+        assert_eq!(session.protocol(), Some(Protocol::Legacy));
+    }
+
     /// A legacy client sends a request before any authentication, then its capabilities: the
     /// server answers the request, advertises its capabilities and records the client's.
     #[tokio::test]

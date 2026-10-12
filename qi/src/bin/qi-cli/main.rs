@@ -69,6 +69,31 @@ Results are printed as JSON, except that in the default human-readable mode stri
 as they are, raw data as a hexadecimal dump and nothing for void. Use --json for machine-readable \
 output.";
 
+/// The URL of a space, with every address its host resolves to: a host name may resolve to
+/// several (IPv6 and IPv4), not all reachable, and they are tried in order.
+#[derive(Clone, Debug)]
+struct SpaceUrl {
+    url: String,
+    addresses: Vec<qi::Address>,
+}
+
+impl std::str::FromStr for SpaceUrl {
+    type Err = qi::messaging::AddressError;
+
+    fn from_str(url: &str) -> Result<Self, Self::Err> {
+        Ok(Self {
+            url: url.to_owned(),
+            addresses: qi::Address::resolve_all(url)?,
+        })
+    }
+}
+
+impl std::fmt::Display for SpaceUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.url)
+    }
+}
+
 /// Explores the services of a qi space and interacts with them.
 #[derive(Debug, Parser)]
 #[command(name = "qi-cli", version, about, long_about = LONG_ABOUT)]
@@ -81,15 +106,18 @@ struct Cli {
         default_value = "tcp://localhost:9559",
         value_name = "URL"
     )]
-    url: qi::Address,
+    url: SpaceUrl,
 
-    /// The user to authenticate as, together with --token.
-    #[arg(long, global = true, requires = "token", value_name = "USER")]
+    /// The user to authenticate as. Its token is asked for on the terminal, without echo, or
+    /// read from standard input with --token-stdin; it is never given on the command line,
+    /// where the shell history and the process list would keep it.
+    #[arg(long, global = true, value_name = "USER")]
     user: Option<String>,
 
-    /// The token of the user to authenticate as.
-    #[arg(long, global = true, requires = "user", value_name = "TOKEN")]
-    token: Option<String>,
+    /// Reads the token of --user from the first line of standard input, for a script or a
+    /// secret manager, instead of asking for it on the terminal.
+    #[arg(long, global = true, requires = "user")]
+    token_stdin: bool,
 
     /// Prints JSON instead of human-readable renderings.
     #[arg(long, global = true)]
@@ -114,24 +142,32 @@ struct Cli {
 enum Command {
     /// Lists the services of the space, or describes the given services.
     ///
-    /// A service is described by its identifier, its name, the machine and process that host it,
-    /// its endpoints, and the members of its object: methods, signals and properties.
+    /// Without service names, lists the identifiers and names of the services. A service is
+    /// described by its identifier, its name, the machine and process that host it, its
+    /// endpoints, and the members of its object: methods, signals and properties.
     Info {
-        /// The names of the services to describe. All the services when omitted.
+        /// The names of the services to describe; `*` stands for any sequence of characters
+        /// (quote it from the shell): `'AL*'`, or `'*'` for every service.
         #[arg(value_name = "SERVICE")]
         services: Vec<String>,
 
-        /// Shows the hidden members, whose names start with an underscore.
+        /// Shows the hidden services and members, whose names start with an underscore, except
+        /// the services of Choregraphe behavior boxes (see --behaviors).
         #[arg(short = 'z', long)]
         hidden: bool,
+
+        /// Shows the services NAOqi registers for the boxes of running Choregraphe behaviors
+        /// (`_Behavior__…`, often hundreds).
+        #[arg(short, long)]
+        behaviors: bool,
 
         /// Shows the special members of the messaging protocol (identifiers below 100), the raw
         /// signatures and the descriptions of the members.
         #[arg(short, long)]
         details: bool,
 
-        /// Only lists the identifiers and names of the services.
-        #[arg(short, long, conflicts_with_all = ["hidden", "details"])]
+        /// Only lists the identifiers and names of the services, even when they are named.
+        #[arg(short, long, conflicts_with = "details")]
         list: bool,
     },
 
@@ -194,6 +230,25 @@ fn main() -> ExitCode {
     }
 }
 
+/// The token of `user`: the first line of standard input, or typed on the terminal without
+/// echo.
+fn read_token(user: &str, from_stdin: bool) -> Result<String> {
+    if from_stdin {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .context("cannot read the token from the standard input")?;
+        let token = line.trim_end_matches(['\r', '\n']);
+        if token.is_empty() {
+            bail!("no token on the standard input");
+        }
+        return Ok(token.to_owned());
+    }
+    rpassword::prompt_password(format!("Token of {user}: ")).context(
+        "cannot ask for the token: no terminal; use --token-stdin to read it from the standard input",
+    )
+}
+
 #[tokio::main]
 async fn run(cli: Cli) -> Result<()> {
     init_tracing(cli.log_level.as_deref())?;
@@ -202,16 +257,20 @@ async fn run(cli: Cli) -> Result<()> {
     }
     let timeout = Duration::from_secs_f64(cli.timeout);
 
-    let credentials = cli.user.zip(cli.token).map(|(user, token)| {
-        let mut credentials = KeyDynValueMap::new();
-        credentials.set("auth_user", user);
-        credentials.set("auth_token", token);
-        credentials
-    });
+    let credentials = match cli.user {
+        Some(user) => {
+            let token = read_token(&user, cli.token_stdin)?;
+            let mut credentials = KeyDynValueMap::new();
+            credentials.set("auth_user", user);
+            credentials.set("auth_token", token);
+            Some(credentials)
+        }
+        None => None,
+    };
     let node = tokio::time::timeout(
         timeout,
         qi::node::init()
-            .connect_to_space(cli.url, credentials)
+            .connect_to_space_at(cli.url.addresses.clone(), credentials)
             .start(),
     )
     .await
@@ -228,6 +287,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Info {
             services,
             hidden,
+            behaviors,
             details,
             list,
         } => {
@@ -236,6 +296,7 @@ async fn run(cli: Cli) -> Result<()> {
                 &services,
                 InfoOptions {
                     list,
+                    behaviors,
                     filter: MemberFilter { hidden, details },
                 },
             )
@@ -300,12 +361,16 @@ mod tests {
         assert_eq!(cli.url.to_string(), "tcp://[::1]:1");
         assert!(matches!(
             cli.command,
-            Command::Info { services, hidden: true, details: true, list: false } if services.is_empty()
+            Command::Info { services, hidden: true, details: true, list: false, .. } if services.is_empty()
         ));
 
-        assert!(Cli::try_parse_from(["qi-cli", "--user", "nao", "info"]).is_err());
+        assert!(Cli::try_parse_from(["qi-cli", "--token-stdin", "info"]).is_err());
+        assert!(Cli::try_parse_from(["qi-cli", "--user", "nao", "--token", "x", "info"]).is_err());
+        let cli =
+            Cli::try_parse_from(["qi-cli", "--user", "nao", "--token-stdin", "info"]).unwrap();
+        assert!(cli.token_stdin);
         assert!(Cli::try_parse_from(["qi-cli", "--url", "http://x", "info"]).is_err());
-        assert!(Cli::try_parse_from(["qi-cli", "info", "--list", "--hidden"]).is_err());
+        assert!(Cli::try_parse_from(["qi-cli", "info", "--list", "--details"]).is_err());
         assert!(Cli::try_parse_from(["qi-cli", "set", "Calculator.value"]).is_err());
     }
 }

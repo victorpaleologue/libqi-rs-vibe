@@ -6,7 +6,7 @@ use crate::{
     output::{self, MetaResult, ServiceReport},
 };
 use anyhow::{anyhow, bail, Context as _, Result};
-use futures::{future, StreamExt};
+use futures::{stream, StreamExt};
 use qi::{
     object::{ActionId, ActionNameOrId},
     service::Info,
@@ -17,6 +17,9 @@ use qi::{
 use serde_json::Value as Json;
 use std::time::{Duration, SystemTime};
 use tokio::time::timeout;
+
+/// How many services `info` describes at once.
+const SERVICES_IN_FLIGHT: usize = 8;
 
 /// The node connected to the space, and the global options.
 pub(crate) struct Context {
@@ -41,10 +44,15 @@ pub(crate) fn seconds(duration: Duration) -> String {
     format!("{}s", duration.as_secs_f64())
 }
 
+/// The prefix of the services NAOqi registers for the boxes of running Choregraphe behaviors.
+const BEHAVIOR_SERVICE_PREFIX: &str = "_Behavior__";
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct InfoOptions {
     /// Only list the identifiers and names of the services.
     pub(crate) list: bool,
+    /// Include the services of Choregraphe behavior boxes.
+    pub(crate) behaviors: bool,
     pub(crate) filter: MemberFilter,
 }
 
@@ -57,31 +65,55 @@ pub(crate) async fn info(ctx: &Context, names: &[String], options: InfoOptions) 
         .await
         .context("cannot list the services of the space")?;
     services.sort_by_key(Info::id);
+    // Hidden services (an underscore first) are left out of listings and patterns unless asked
+    // for, and the Choregraphe boxes NAOqi registers as services (hundreds of them, hidden too)
+    // unless asked for by themselves; a service named exactly is always shown.
+    let shown = |info: &Info| {
+        let name = info.name();
+        if name.starts_with(BEHAVIOR_SERVICE_PREFIX) {
+            options.behaviors
+        } else {
+            options.filter.hidden || !name.starts_with('_')
+        }
+    };
     let mut missing = Vec::new();
     let selected: Vec<Info> = if names.is_empty() {
-        services
+        services.into_iter().filter(|info| shown(info)).collect()
     } else {
-        names
-            .iter()
-            .filter_map(|name| {
-                let found = services.iter().find(|info| info.name() == name).cloned();
-                if found.is_none() {
-                    missing.push(format!("\"{name}\""));
-                }
-                found
-            })
-            .collect()
+        let mut selected: Vec<Info> = Vec::new();
+        for name in names {
+            let before = selected.len();
+            if name.contains('*') {
+                selected.extend(
+                    services
+                        .iter()
+                        .filter(|info| shown(info) && wildcard_match(name, info.name()))
+                        .cloned(),
+                );
+            } else {
+                selected.extend(services.iter().find(|info| info.name() == name).cloned());
+            }
+            if selected.len() == before {
+                missing.push(format!("\"{name}\""));
+            }
+        }
+        selected.sort_by_key(Info::id);
+        selected.dedup_by_key(|info| info.id());
+        selected
     };
+    // Without service names, `info` lists the services, as `qicli` does.
+    let list = options.list || names.is_empty();
 
-    // The meta objects require a connection to each service: get them concurrently.
-    let objects: Vec<Option<Result<AnyObject>>> = if options.list {
+    // The meta objects require a request to each service: get a few at a time, a robot may
+    // host hundreds of services (NAOqi registers every running Choregraphe box as one).
+    let objects: Vec<Option<Result<AnyObject>>> = if list {
         selected.iter().map(|_| None).collect()
     } else {
-        future::join_all(selected.iter().map(|info| ctx.service(info.name())))
-            .await
-            .into_iter()
+        stream::iter(selected.iter().map(|info| ctx.service(info.name())))
+            .buffered(SERVICES_IN_FLIGHT)
             .map(Some)
             .collect()
+            .await
     };
     let reports = selected.iter().zip(&objects).map(|(info, object)| {
         let meta: MetaResult<'_> = object.as_ref().map(|result| {
@@ -115,6 +147,43 @@ pub(crate) async fn info(ctx: &Context, names: &[String], options: InfoOptions) 
         bail!("no service named {} in the space", missing.join(", "));
     }
     Ok(())
+}
+
+/// Whether `name` matches `pattern`, where `*` stands for any sequence of characters.
+fn wildcard_match(pattern: &str, name: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        match rest.find(part) {
+            Some(index) => rest = rest.get(index + part.len()..).unwrap_or_default(),
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
+#[cfg(test)]
+mod wildcard_tests {
+    use super::wildcard_match;
+
+    #[test]
+    fn wildcards_match_any_sequence() {
+        assert!(wildcard_match("*", "ALMemory"));
+        assert!(wildcard_match("AL*", "ALMemory"));
+        assert!(wildcard_match("*Memory", "ALMemory"));
+        assert!(wildcard_match("AL*o*y", "ALMemory"));
+        assert!(wildcard_match("ALMemory", "ALMemory"));
+        assert!(!wildcard_match("AL*", "LogManager"));
+        assert!(!wildcard_match("*Motion", "ALMotionRecorder"));
+        assert!(!wildcard_match("A*A", "A"));
+    }
 }
 
 /// A member that may be called or posted to, with the types of its parameters.

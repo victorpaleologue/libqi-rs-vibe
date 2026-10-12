@@ -41,6 +41,11 @@ use std::{future::Future, sync::Arc};
 use tokio::sync::watch;
 use tracing::{debug, info};
 
+/// How long a connecting side waits for the capabilities a legacy server advertises on
+/// connection, when the server answered the authentication with an error before advertising
+/// them. NAOqi 2.1 sends both from different threads, in either order.
+const LEGACY_ADVERTISEMENT_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
 const SERVICE_ID: service::Id = service::Id(0);
 const OBJECT_ID: object::Id = object::Id(0);
 const AUTHENTICATE_ACTION_ID: object::ActionId = object::ActionId(8);
@@ -196,9 +201,16 @@ impl Controller {
             }
             Err(messaging::Error::CallError(error)) => {
                 // A legacy server advertises its capabilities as soon as it accepts the
-                // connection, so they have been received before its error reply. A standard
-                // server that refuses the authentication sends nothing before its error.
-                let advertised = self.remote_map.borrow().is_some();
+                // connection, but from another thread than the one answering the call: the
+                // advertisement may come right after the error reply. A standard server that
+                // refuses the authentication sends nothing, and closes the connection.
+                let mut remote_map = self.remote_map.subscribe();
+                let advertised = tokio::time::timeout(
+                    LEGACY_ADVERTISEMENT_GRACE,
+                    remote_map.wait_for(Option::is_some),
+                )
+                .await
+                .is_ok_and(|received| received.is_ok());
                 if !advertised {
                     return Err(AuthenticateToServerError::Refused(error).into());
                 }

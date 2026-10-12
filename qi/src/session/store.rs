@@ -13,12 +13,25 @@ use tokio::sync::Mutex;
 ///
 /// It creates new sessions that are associated with services and register them
 /// for further retrieval, enabling usage of service session targets.
+///
+/// A session is also kept by the address it was opened to, and reused for every
+/// service reached at that address, as libqi's socket cache does: a node that
+/// hosts many services (`naoqi` hosts hundreds) is reached through one
+/// connection, the one to the service directory included when it hosts that too.
 #[derive(Debug)]
 pub(crate) struct Store {
     services: service::SharedServices,
 
     /// The list of existing sessions with the associated service name.
     sessions: Arc<Mutex<HashMap<String, WeakSession>>>,
+
+    /// The existing sessions by the address of their channel.
+    by_address: Arc<Mutex<HashMap<Address, WeakSession>>>,
+
+    /// One lock per address, held while a session to it is looked up or
+    /// opened: concurrent requests for services at one address share a single
+    /// connection instead of each opening its own.
+    connecting: Arc<Mutex<HashMap<Address, Arc<Mutex<()>>>>>,
 }
 
 impl Store {
@@ -26,7 +39,46 @@ impl Store {
         Self {
             services,
             sessions: Default::default(),
+            by_address: Default::default(),
+            connecting: Default::default(),
         }
+    }
+
+    async fn get_by_address(&self, address: &Address) -> Option<Session> {
+        let mut sessions = self.by_address.lock().await;
+        let session = sessions.get(address)?.upgrade();
+        if session.is_none() {
+            sessions.remove(address);
+        }
+        session
+    }
+
+    /// A session to the address: the existing one if any, else a new one.
+    /// Either way it is registered for the service name.
+    async fn get_or_connect(
+        &self,
+        service_name: &str,
+        address: Address,
+        credentials: KeyDynValueMap,
+    ) -> Result<Session, Error> {
+        let lock = Arc::clone(self.connecting.lock().await.entry(address).or_default());
+        let _connecting = lock.lock().await;
+        let session = match self.get_by_address(&address).await {
+            Some(session) => session,
+            None => {
+                let session = self.create(address, credentials).await?;
+                self.by_address
+                    .lock()
+                    .await
+                    .insert(address, session.downgrade());
+                session
+            }
+        };
+        self.sessions
+            .lock()
+            .await
+            .insert(service_name.to_owned(), session.downgrade());
+        Ok(session)
     }
 
     async fn get(&self, name: &str) -> Option<Session> {
@@ -68,7 +120,7 @@ impl Store {
                 }
                 Kind::Endpoint(address) => {
                     match self
-                        .create(service_name, *address, credentials.clone())
+                        .get_or_connect(service_name, *address, credentials.clone())
                         .await
                     {
                         Err(err) => connection_errors.push(ConnectionError {
@@ -84,28 +136,20 @@ impl Store {
     }
 
     /// Opens a new channel to the address and connects a session client over
-    /// it. The service name is used to register the session for this service,
-    /// so that it may be reused for future service relative session targets.
+    /// it.
     async fn create(
         &self,
-        service_name: &str,
         address: messaging::Address,
         credentials: KeyDynValueMap,
     ) -> Result<Session, Error> {
         let (messages_in, messages_out) = messaging::channel::connect(address).await?;
-        let session = Session::connect(
+        Session::connect(
             messages_in,
             messages_out,
             credentials,
             self.services.clone(),
         )
-        .await?;
-        let service_name = service_name.to_owned();
-        self.sessions
-            .lock()
-            .await
-            .insert(service_name.clone(), session.downgrade());
-        Ok(session)
+        .await
     }
 }
 
