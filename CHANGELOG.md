@@ -25,8 +25,35 @@ released together.
 - `interop/cpp21/`: the harness ported to the `libqi` of NAOqi 2.1, built from source in an
   Ubuntu 14.04 container, with its byte fixtures (`interop/vectors/libqi-2.1-values.jsonl`), a
   NAOqi probe for `naoqi-sim`, and `qi/tests/interop_cpp21.rs`.
+- `Address::resolve_all` and `InitializingNode::connect_to_space_at`: a host name resolves to
+  every address it has, tried in order until one answers, as `libqi` does. A NAO announcing
+  itself as `<robot_name>.local` resolves to an IPv6 address first, which its NAOqi does not
+  listen on.
+- `qi-cli info` takes patterns (`'AL*'`, `'*'`) and, with `--behaviors` (`-b`), shows the
+  services NAOqi registers for the boxes of running Choregraphe behaviors.
+- `qi-cli --token-stdin` reads the authentication token from standard input.
+
+### Changed
+
+- `qi-cli info` without service names lists the services, as `qicli` does; hidden services
+  (an underscore first) are left out unless `--hidden` is given, and the Choregraphe box
+  services unless `--behaviors` is.
+- `qi-cli --user` asks for its token on the terminal, without echo: `--token` is removed, since
+  the shell history and the process list kept the token.
 
 ### Fixed
+
+- A NAOqi 2.1 robot is recognized whatever the order in which it sends its `Capabilities`
+  message and its error reply to the authentication call: it sends them from two threads, and
+  the advertisement may come last. The client waits for it briefly after an error.
+- Sessions are kept by the address they connect to and reused for every service reached there,
+  as `libqi`'s socket cache does: a node hosting hundreds of services (NAOqi 2.1 registers
+  every running Choregraphe box as one) is reached through one connection, not one per
+  service. `qi-cli info` opened 1,700 connections to a NAO at once, which brought its NAOqi
+  down; it now describes 8 services at a time over one connection.
+- The unknown type of `libqi` (`X` in signatures), which NAOqi 2.1 advertises for members of
+  `ALMemory`, `ALMotion`, `ALVideoDevice` and `ALModularity`, reads as dynamic: their meta
+  objects failed to parse.
 
 - A reply to a call that requests a return signature the value does not convert to is sent
   with the declared type, like `libqi` does, instead of as a dynamic value (which lost the

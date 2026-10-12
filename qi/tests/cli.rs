@@ -180,8 +180,14 @@ async fn info_lists_services_and_describes_members() {
     );
     assert!(report.contains("signature   (ii)->i\n"), "{report}");
 
-    // Every service, with members.
+    // Without names, the services are listed, as qicli does.
     let report = success(&qi_cli(&space.url, &["info"]).await);
+    assert!(report.contains("001 [ServiceDirectory]"), "{report}");
+    assert!(report.contains("002 [Calculator]"), "{report}");
+    assert!(!report.contains(" add::"), "{report}");
+
+    // Every service, with members, through a pattern.
+    let report = success(&qi_cli(&space.url, &["info", "*"]).await);
     assert!(report.contains("001 [ServiceDirectory]"), "{report}");
     assert!(
         report.contains(" services::()->List<ServiceInfo>\n"),
@@ -189,6 +195,9 @@ async fn info_lists_services_and_describes_members() {
     );
     assert!(report.contains("002 [Calculator]"), "{report}");
     assert!(report.contains(" add::(Int32,Int32)->Int32\n"), "{report}");
+    let report = success(&qi_cli(&space.url, &["info", "Calc*"]).await);
+    assert!(report.contains("002 [Calculator]"), "{report}");
+    assert!(!report.contains("ServiceDirectory]"), "{report}");
 
     // JSON report.
     let report = success(&qi_cli(&space.url, &["--json", "info", "Calculator"]).await);

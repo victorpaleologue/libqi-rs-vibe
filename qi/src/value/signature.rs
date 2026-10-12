@@ -129,6 +129,9 @@ const CHAR_STRING: char = 's';
 const CHAR_RAW: char = 'r';
 const CHAR_OBJECT: char = 'o';
 const CHAR_DYNAMIC: char = 'm';
+/// A type `libqi` could not describe (`Type_Unknown`): NAOqi 2.1 advertises some members of
+/// `ALMemory`, `ALMotion` and others with it.
+const CHAR_UNKNOWN: char = 'X';
 const CHAR_MARK_OPTION: char = '+';
 const CHAR_LIST_BEGIN: char = '[';
 const CHAR_LIST_END: char = ']';
@@ -247,6 +250,8 @@ fn parse_type(iter: &mut std::str::Chars) -> Result<Option<Type>, ParseError> {
         CHAR_RAW => Some(Type::Raw),
         CHAR_OBJECT => Some(Type::Object),
         CHAR_DYNAMIC => None,
+        // No type information: read as dynamic, the closest this model has.
+        CHAR_UNKNOWN => None,
         // Anything else is unexpected.
         c => return Err(ParseError::UnexpectedChar(c, type_str.to_owned())),
     };

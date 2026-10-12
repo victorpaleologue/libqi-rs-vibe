@@ -109,6 +109,19 @@ fn to_from_string() {
     );
 }
 
+/// NAOqi 2.1 advertises members with `X`, the unknown type of libqi: it reads as dynamic.
+#[test]
+fn unknown_type_reads_as_dynamic() {
+    assert_eq!("X".parse::<Signature>().map(|s| s.into_type()), Ok(None));
+    assert_eq!(
+        "(sX)".parse::<Signature>().map(|s| s.into_type()),
+        Ok(Some(Type::Tuple(ty::Tuple::Tuple(vec![
+            Some(Type::String),
+            None
+        ]))))
+    );
+}
+
 #[test]
 fn from_str_errors() {
     assert_eq!("".parse::<Signature>(), Err(ParseError::EndOfInput));

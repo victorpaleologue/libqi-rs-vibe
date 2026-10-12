@@ -27,6 +27,7 @@ cli = [
   "dep:base64",
   "dep:clap",
   "dep:colored",
+  "dep:rpassword",
   "dep:serde_json",
   "dep:tracing-subscriber",
   "tracing-subscriber/env-filter",
@@ -84,6 +85,8 @@ anyhow = { workspace = true, optional = true }
 base64 = { version = "0.23.1", optional = true }
 clap = { workspace = true, optional = true }
 colored = { workspace = true, optional = true }
+# The masked prompt of qi-cli's authentication token.
+rpassword = { version = "7.5", optional = true }
 serde_json = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 

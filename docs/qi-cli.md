@@ -12,18 +12,22 @@ $ qi-cli --help
 ## Usage
 
 ```
-qi-cli [--url URL] [--user USER --token TOKEN] [--json] [--log-level LEVEL] [--timeout SECONDS] <COMMAND>
+qi-cli [--url URL] [--user USER [--token-stdin]] [--json] [--log-level LEVEL] [--timeout SECONDS] <COMMAND>
 ```
 
 The space is designated by the address of its service directory, `tcp://localhost:9559` by default
-(`--url`, or `--qi-url` as in `qicli`). Spaces that require authentication are joined with `--user`
-and `--token`. Members of services are designated as `SERVICE.MEMBER`.
+(`--url`, or `--qi-url` as in `qicli`). Spaces that require authentication are joined with `--user`:
+the token is asked for on the terminal, without echo, or read from the first line of standard
+input with `--token-stdin` (for a script or a secret manager, `secret-tool lookup … | qi-cli
+--user nao --token-stdin info`). The token is never an argument: the shell history and the
+process list would keep it. Members of services are designated as `SERVICE.MEMBER`.
 
 ### Listing and describing services
 
 ```console
-$ qi-cli info                     # every service, with its members
-$ qi-cli info --list              # only the identifiers and names of the services
+$ qi-cli info                     # the identifiers and names of the services, as qicli
+$ qi-cli info 'AL*'               # the services matching a pattern, with their members
+$ qi-cli info '*'                 # every service, with its members
 $ qi-cli info Calculator          # one service
 002 [Calculator]
   * Info:
@@ -46,7 +50,11 @@ Methods are printed as `name::(parameters)->result`, with type names in the styl
 (`Int32`, `Float`, `Double`, `String`, `List<...>`, `Map<...,...>`, `Optional<...>`, `Value` for
 dynamic values, and the names of structures).
 
-Members whose names start with an underscore are hidden unless `--hidden` (`-z`) is given. The
+Services and members whose names start with an underscore are hidden unless `--hidden` (`-z`)
+is given, a service named exactly excepted. On a NAO, NAOqi also registers each box of the
+running Choregraphe behaviors as a hidden service (`_Behavior__…`, often hundreds): those are
+shown only with `--behaviors` (`-b`). Services are described a few at a time, over one
+connection per endpoint. The
 special members of the messaging protocol (identifiers below 100) are hidden unless `--details`
 (`-d`) is given, which also prints the raw signatures (`(ii)->i`) and the descriptions of the
 members and of their parameters.

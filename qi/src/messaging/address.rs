@@ -10,12 +10,34 @@ pub enum Address {
 }
 
 impl Address {
+    /// The address of a URL. A host name resolves to its first address; see
+    /// [`resolve_all`](Self::resolve_all) for every address it resolves to.
     pub fn from_url(url: &Url) -> Result<Self, Error> {
+        Self::all_from_url(url)?
+            .into_iter()
+            .next()
+            .ok_or(Error::ResolveHost(None))
+    }
+
+    /// Every address of a URL, in the order the resolver gives them: a host name may resolve to
+    /// several (an IPv6 and an IPv4 address, typically), not all of them reachable. Connecting
+    /// to the first that answers is what [`Node::connect_to_space_at`] does, as libqi does.
+    ///
+    /// [`Node::connect_to_space_at`]: crate::node::InitializingNode::connect_to_space_at
+    ///
+    /// # Resolution request and threading
+    /// The host is resolved with `std::net::ToSocketAddrs`, blocking the current thread until
+    /// the request terminates.
+    pub fn resolve_all(url: &str) -> Result<Vec<Self>, Error> {
+        Self::all_from_url(&url.parse().map_err(Error::InvalidUrl)?)
+    }
+
+    fn all_from_url(url: &Url) -> Result<Vec<Self>, Error> {
         match url.scheme().parse()? {
-            Scheme::Tcp(ssl) => Ok(Self::Tcp {
-                address: socket_addr_from_url(url)?,
-                ssl,
-            }),
+            Scheme::Tcp(ssl) => Ok(socket_addrs_from_url(url)?
+                .into_iter()
+                .map(|address| Self::Tcp { address, ssl })
+                .collect()),
         }
     }
 
@@ -55,16 +77,18 @@ impl std::fmt::Display for Address {
     }
 }
 
-fn socket_addr_from_url(url: &Url) -> Result<SocketAddr, Error> {
+fn socket_addrs_from_url(url: &Url) -> Result<Vec<SocketAddr>, Error> {
     const DEFAULT_PORT: u16 = 9559;
-    url.socket_addrs(|| match Scheme::from_str(url.scheme()) {
-        Ok(Scheme::Tcp(_)) => Some(DEFAULT_PORT),
-        Err(_) => None,
-    })
-    .map_err(|err| Error::ResolveHost(Some(err)))?
-    .first()
-    .copied()
-    .ok_or(Error::ResolveHost(None))
+    let addresses = url
+        .socket_addrs(|| match Scheme::from_str(url.scheme()) {
+            Ok(Scheme::Tcp(_)) => Some(DEFAULT_PORT),
+            Err(_) => None,
+        })
+        .map_err(|err| Error::ResolveHost(Some(err)))?;
+    if addresses.is_empty() {
+        return Err(Error::ResolveHost(None));
+    }
+    Ok(addresses)
 }
 
 #[derive(Debug)]
