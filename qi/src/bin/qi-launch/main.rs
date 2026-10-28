@@ -28,7 +28,7 @@
 #[allow(dead_code)]
 mod json;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use qi::{
     module::host::{Finder, Module},
@@ -45,13 +45,24 @@ use std::{
     },
 };
 use tokio::{sync::Notify, task::JoinSet};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::{filter::LevelFilter, EnvFilter};
+use tracing_subscriber::EnvFilter;
+
+const AFTER_HELP: &str = "\
+Modules are found like libqi finds them: the module NAME is declared by the file \
+share/qi/module/NAME.mod (containing `cpp`) of an SDK prefix (--qi-sdk-prefix or QI_SDK_PREFIX, \
+the prefix of the program, QI_ADDITIONAL_SDK_PREFIXES), and its library is lib/libNAME.so (a \
+module a.b is lib/a/libb.so). qi-launch loads the modules written in Rust with #[qi::module]; \
+C++ modules need qilaunch.
+
+LIBRARIES (positional arguments) are loaded the way the qi-launch of NAOqi 2.1 loads them: every \
+factory of the library is registered as a service.";
 
 /// Loads qi modules: registers the objects of their factories as services and calls their
-/// functions.
+/// functions, like qilaunch.
 #[derive(Debug, Parser)]
-#[command(name = "qi-launch", version, about)]
+#[command(name = "qi-launch", version, about, after_help = AFTER_HELP)]
 struct Cli {
     /// Load given module (can be set multiple times) (deprecated, use --object).
     #[arg(short = 'm', long = "module", value_name = "MODULE")]
@@ -88,14 +99,19 @@ struct Cli {
     #[arg(short = 'n', long, value_name = "NAME", default_value = "")]
     name: String,
 
-    /// The URL of the service directory to connect to. Defaults to the QI_URL environment
-    /// variable, else tcp://127.0.0.1:9559.
+    /// Listen on all interfaces (the -a of the qi-launch of NAOqi 2.1): tcp://0.0.0.0:0.
+    #[arg(short = 'a', long)]
+    all: bool,
+
+    /// The URL of the service directory to connect to (a host alone is tcp://HOST:9559).
+    /// Defaults to the QI_URL environment variable, else tcp://127.0.0.1:9559.
     #[arg(long = "qi-url", value_name = "URL")]
     qi_url: Option<String>,
 
     /// The URLs to listen on, separated by `;` (can be set multiple times). The services of the
-    /// objects are served there. Defaults to tcp://127.0.0.1:0 (only local processes reach the
-    /// services, as with libqi), and to tcp://127.0.0.1:9559 with --qi-standalone.
+    /// objects are served there. Defaults to QI_LISTEN_URL, else tcp://127.0.0.1:0 (only local
+    /// processes reach the services, as with libqi), and tcp://127.0.0.1:9559 with
+    /// --qi-standalone.
     #[arg(long = "qi-listen-url", value_name = "URL", value_delimiter = ';')]
     qi_listen_urls: Vec<String>,
 
@@ -103,16 +119,20 @@ struct Cli {
     #[arg(long = "qi-standalone")]
     qi_standalone: bool,
 
-    /// The SDK prefix where modules are searched (share/qi/module/<name>.mod, lib/lib<name>.so).
-    /// Defaults to QI_SDK_PREFIX, else the parent of the directory of the program; the prefixes
-    /// of QI_ADDITIONAL_SDK_PREFIXES are searched too.
+    /// The SDK prefix where modules are searched. Defaults to QI_SDK_PREFIX.
     #[arg(long = "qi-sdk-prefix", value_name = "PREFIX")]
     qi_sdk_prefix: Option<PathBuf>,
 
-    /// The level of the logs printed on the standard error: error, warn, info, debug or trace.
-    /// Defaults to RUST_LOG, else "info".
+    /// The level of the logs: 0 to 6, or silent, fatal, error, warning, info, verbose or debug
+    /// (or filter directives of tracing, such as "qi=debug"). Defaults to QI_LOG_LEVEL, else
+    /// info.
     #[arg(long = "qi-log-level", value_name = "LEVEL")]
     log_level: Option<String>,
+
+    /// Libraries to load like the qi-launch of NAOqi 2.1 does: a path, or a name found in the
+    /// lib directories of the prefixes.
+    #[arg(value_name = "LIBRARIES")]
+    libraries: Vec<String>,
 }
 
 /// The space the launcher belongs to: a node connected to it, or hosting it.
@@ -146,7 +166,27 @@ impl Modules {
         }
         let info = self.finder.find(name)?;
         let module = Arc::new(Module::load(&info.path, Some(&self.space_url)).await?);
+        if module.name() != name {
+            bail!(
+                "module name do not match: '{}' vs '{name}' (the library {} is another module)",
+                module.name(),
+                info.path.display()
+            );
+        }
         self.loaded.insert(name.to_owned(), Arc::clone(&module));
+        Ok(module)
+    }
+
+    /// Loads a library by path or name, as `Session::loadService` of libqi 2.1 does.
+    async fn load_library(&mut self, library: &str) -> Result<Arc<Module>> {
+        let path = self
+            .finder
+            .find_library(library)
+            .unwrap_or_else(|| PathBuf::from(library));
+        let module = Arc::new(Module::load(&path, Some(&self.space_url)).await?);
+        self.loaded
+            .entry(module.name().to_owned())
+            .or_insert_with(|| Arc::clone(&module));
         Ok(module)
     }
 }
@@ -154,6 +194,20 @@ impl Modules {
 /// Splits `module.member` at its last dot, as `libqi` does.
 fn split_member(full: &str) -> (&str, &str) {
     full.rsplit_once('.').unwrap_or((full, full))
+}
+
+/// Completes a URL like libqi does: the scheme, host and port missing are the default ones.
+fn complete_url(url: &str, default_host: &str, default_port: u16) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("tcp", url));
+    let rest = if rest.is_empty() { default_host } else { rest };
+    let has_port = rest
+        .rsplit_once(':')
+        .is_some_and(|(host, port)| !host.ends_with(':') && port.parse::<u16>().is_ok());
+    if has_port {
+        format!("{scheme}://{rest}")
+    } else {
+        format!("{scheme}://{rest}:{default_port}")
+    }
 }
 
 fn main() -> ExitCode {
@@ -178,6 +232,24 @@ fn main() -> ExitCode {
 }
 
 async fn run(mut cli: Cli) -> u8 {
+    // The signals are handled from the start, as libqi 2.5 to 2.9 do: the first one cancels the
+    // function calls and stops the launcher, the second one forces the exit.
+    let cancel = CancellationToken::new();
+    let stop = Arc::new(Notify::new());
+    tokio::spawn({
+        let (cancel, stop) = (cancel.clone(), Arc::clone(&stop));
+        async move {
+            signal().await;
+            info!("Signal received, exiting...");
+            cancel.cancel();
+            stop.notify_one();
+            signal().await;
+            info!("Signal received again, forcing exit...");
+            #[allow(clippy::exit)]
+            std::process::exit(1);
+        }
+    });
+
     if cli.name.is_empty() {
         error!("No launcher name, set one with --name or -n");
         return 1;
@@ -187,19 +259,27 @@ async fn run(mut cli: Cli) -> u8 {
     }
     let mut objects = std::mem::take(&mut cli.objects);
     objects.append(&mut cli.modules);
-    if objects.is_empty() && cli.functions.is_empty() {
+    if objects.is_empty() && cli.functions.is_empty() && cli.libraries.is_empty() {
         error!("No object to load and no function to call, add one with --object or --function");
+        return 1;
+    }
+    if cli.qi_standalone && cli.qi_url.is_some() {
+        error!("You cannot specify both --qi-standalone and --qi-url to connect.");
         return 1;
     }
     if cli.qt_eventloop {
         warn!("--qt-eventloop has no effect: qi-launch has no Qt event loop");
     }
 
-    let stop = Arc::new(Notify::new());
     let exit_status = Arc::new(AtomicU8::new(0));
     let mut calls = JoinSet::new();
+    let context = Context {
+        cancel: cancel.clone(),
+        stop: Arc::clone(&stop),
+        exit_status: Arc::clone(&exit_status),
+    };
     // The space and the modules live until the launcher exits.
-    let _launched = match launch(&cli, objects.clone(), &mut calls, &stop, &exit_status).await {
+    let _launched = match launch(&cli, &objects, &mut calls, &context).await {
         Ok(launched) => launched,
         Err(err) => {
             error!("{err:#}");
@@ -207,51 +287,53 @@ async fn run(mut cli: Cli) -> u8 {
         }
     };
 
-    let keep_running = !objects.is_empty() || cli.keep_running;
-    tokio::select! {
-        () = wait_for_stop(&stop), if keep_running => {}
-        () = async { while calls.join_next().await.is_some() {} }, if !keep_running => {}
-        () = signal() => {
-            info!("Signal received, exiting...");
-            calls.abort_all();
-            // A second signal forces the exit.
-            tokio::spawn(async {
-                signal().await;
-                info!("Signal received again, forcing exit...");
-                #[allow(clippy::exit)]
-                std::process::exit(1);
-            });
-        }
+    if !objects.is_empty() || !cli.libraries.is_empty() || cli.keep_running {
+        stop.notified().await;
+        cancel.cancel();
     }
-    calls.abort_all();
+    // Waits for the functions, canceled or not.
+    while calls.join_next().await.is_some() {}
     exit_status.load(Ordering::SeqCst)
 }
 
-async fn wait_for_stop(stop: &Notify) {
-    stop.notified().await
+/// What the function calls share with the launcher.
+struct Context {
+    cancel: CancellationToken,
+    stop: Arc<Notify>,
+    exit_status: Arc<AtomicU8>,
 }
 
 /// Connects to the space, loads the objects and starts the function calls.
 async fn launch(
     cli: &Cli,
-    objects: Vec<String>,
+    objects: &[String],
     calls: &mut JoinSet<()>,
-    stop: &Arc<Notify>,
-    exit_status: &Arc<AtomicU8>,
+    context: &Context,
 ) -> Result<(Space, Modules)> {
     let default_listen_url = if cli.qi_standalone {
         "tcp://127.0.0.1:9559"
+    } else if cli.all {
+        "tcp://0.0.0.0:0"
     } else {
         "tcp://127.0.0.1:0"
     };
-    let listen_urls = if cli.qi_listen_urls.is_empty() {
-        vec![default_listen_url.to_owned()]
-    } else {
+    let listen_urls: Vec<String> = if !cli.qi_listen_urls.is_empty() {
         cli.qi_listen_urls.clone()
+    } else if let Some(env) = std::env::var("QI_LISTEN_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+    {
+        env.split(';').map(str::to_owned).collect()
+    } else {
+        vec![default_listen_url.to_owned()]
     };
+    let listen_urls: Vec<String> = listen_urls
+        .iter()
+        .map(|url| complete_url(url, "127.0.0.1", if cli.qi_standalone { 9559 } else { 0 }))
+        .collect();
     let mut node = qi::node::init();
     // Like libqi, the launcher listens only when it has services to serve.
-    if cli.qi_standalone || !objects.is_empty() {
+    if cli.qi_standalone || !objects.is_empty() || !cli.libraries.is_empty() {
         for url in &listen_urls {
             for address in qi::Address::resolve_all(url)
                 .with_context(|| format!("invalid --qi-listen-url {url}"))?
@@ -271,17 +353,20 @@ async fn launch(
             .unwrap_or_else(|| default_listen_url.to_owned());
         (Space::Hosted(node), url)
     } else {
-        let url = cli
-            .qi_url
-            .clone()
-            .unwrap_or_else(qi::module::default_space_url);
+        let url = complete_url(
+            &cli.qi_url
+                .clone()
+                .unwrap_or_else(qi::module::default_space_url),
+            "127.0.0.1",
+            9559,
+        );
         info!("Connection to service directory at {url}");
         let addresses = qi::Address::resolve_all(&url).context("invalid --qi-url")?;
         let node = node
             .connect_to_space_at(addresses, None)
             .start()
             .await
-            .with_context(|| format!("cannot connect to the service directory at {url}"))?;
+            .with_context(|| format!("Connect error: cannot connect to {url}"))?;
         (Space::Connected(node), url)
     };
 
@@ -291,7 +376,23 @@ async fn launch(
         loaded: HashMap::new(),
     };
 
-    for object in &objects {
+    for library in &cli.libraries {
+        info!("loading {library}");
+        let module = modules.load_library(library).await?;
+        for factory in module.factories().to_vec() {
+            let service: AnyObject = module
+                .object()
+                .call(factory.as_str(), ())
+                .await
+                .with_context(|| format!("cannot create the object {factory}"))?;
+            space
+                .register_service(&factory, service)
+                .await
+                .with_context(|| format!("cannot register the service {factory}"))?;
+        }
+    }
+
+    for object in objects {
         info!("Loading object {object}");
         let (module_name, factory) = split_member(object);
         let module = modules.import(module_name).await?;
@@ -323,14 +424,19 @@ async fn launch(
         info!("Calling function {name}({args_text})");
         let module = Arc::clone(&module);
         let (member, function) = (member.to_owned(), function.clone());
-        let (stop, exit_status) = (Arc::clone(stop), Arc::clone(exit_status));
+        let (cancel, stop, exit_status) = (
+            context.cancel.clone(),
+            Arc::clone(&context.stop),
+            Arc::clone(&context.exit_status),
+        );
         calls.spawn(async move {
-            let result = module
-                .object()
-                .meta_call(member.into(), Value::Tuple(args))
-                .await;
-            if let Err(err) = result {
-                error!("{function} has finished with an error: {err}");
+            let call = module.object().meta_call(member.into(), Value::Tuple(args));
+            let failure = tokio::select! {
+                result = call => result.err().map(|err| format!("{function} has finished with an error: {err}")),
+                () = cancel.cancelled() => Some(format!("{function} has been canceled")),
+            };
+            if let Some(failure) = failure {
+                error!("{failure}");
                 exit_status.store(1, Ordering::SeqCst);
                 stop.notify_one();
             }
@@ -403,15 +509,28 @@ async fn signal() {
     }
 }
 
-fn init_logging(level: Option<&str>) -> Result<()> {
-    let filter = match level {
-        Some(level) => EnvFilter::try_new(level)?,
-        None => EnvFilter::builder()
-            .with_default_directive(LevelFilter::INFO.into())
-            .from_env_lossy(),
+/// The filter of the logs, from a libqi log level (`--qi-log-level`, `QI_LOG_LEVEL`) or
+/// directives of tracing.
+fn log_filter(level: &str) -> Result<EnvFilter> {
+    let directive = match level.trim() {
+        "0" | "silent" => "off",
+        "1" | "fatal" | "2" | "error" => "error",
+        "3" | "warning" => "warn",
+        "4" | "info" => "info",
+        "5" | "verbose" => "debug",
+        "6" | "debug" => "trace",
+        other => other,
     };
+    Ok(EnvFilter::try_new(directive)?)
+}
+
+fn init_logging(level: Option<&str>) -> Result<()> {
+    let level = level
+        .map(str::to_owned)
+        .or_else(|| std::env::var("QI_LOG_LEVEL").ok())
+        .unwrap_or_else(|| "info".to_owned());
     tracing_subscriber::fmt()
-        .with_env_filter(filter)
+        .with_env_filter(log_filter(&level)?)
         .with_writer(std::io::stderr)
         .with_target(false)
         .try_init()
@@ -431,5 +550,34 @@ mod tests {
             ("mod.fn", r#"1, "a(b)""#)
         );
         assert_eq!(split_member("a.b.c"), ("a.b", "c"));
+    }
+
+    #[test]
+    fn completes_urls_like_libqi() {
+        assert_eq!(
+            complete_url("10.0.0.2", "127.0.0.1", 9559),
+            "tcp://10.0.0.2:9559"
+        );
+        assert_eq!(
+            complete_url("tcps://nao.local", "127.0.0.1", 9559),
+            "tcps://nao.local:9559"
+        );
+        assert_eq!(
+            complete_url("tcp://127.0.0.1:0", "127.0.0.1", 9559),
+            "tcp://127.0.0.1:0"
+        );
+        assert_eq!(
+            complete_url("nao:9503", "127.0.0.1", 9559),
+            "tcp://nao:9503"
+        );
+    }
+
+    #[test]
+    fn parses_libqi_log_levels() {
+        for level in [
+            "0", "silent", "fatal", "warning", "verbose", "6", "qi=debug",
+        ] {
+            assert!(log_filter(level).is_ok(), "{level}");
+        }
     }
 }

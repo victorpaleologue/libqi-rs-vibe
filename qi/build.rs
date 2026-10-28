@@ -16,10 +16,35 @@
 //! `CXXFLAGS` and their target-specific variants).
 
 fn main() {
+    #[cfg(feature = "module")]
+    glibc_compat();
     #[cfg(feature = "module-cpp")]
     bridge::build_libqi();
     #[cfg(feature = "module-naoqi")]
     bridge::build_naoqi();
+}
+
+/// Links the fallback of `getauxval` (`cpp/glibc_compat.c`) into the programs and libraries
+/// using modules, on Linux with the GNU C library, for the libraries of modules to load with the
+/// glibc older than 2.16 of NAOqi 2.1 robots.
+#[cfg(feature = "module")]
+fn glibc_compat() {
+    println!("cargo:rerun-if-changed=cpp/glibc_compat.c");
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if os != "linux" || env != "gnu" {
+        return;
+    }
+    cc::Build::new()
+        .file("cpp/glibc_compat.c")
+        .pic(true)
+        .cargo_metadata(false)
+        .compile("qi_glibc_compat");
+    // The whole archive: its definition must be linked before the standard library, which
+    // references it, is.
+    let out = std::env::var("OUT_DIR").expect("cargo sets OUT_DIR");
+    println!("cargo:rustc-link-search=native={out}");
+    println!("cargo:rustc-link-lib=static:+whole-archive=qi_glibc_compat");
 }
 
 #[cfg(any(feature = "module-cpp", feature = "module-naoqi"))]
@@ -91,6 +116,7 @@ mod bridge {
         }
     }
 
+    #[cfg(feature = "module-cpp")]
     pub(super) fn build_libqi() {
         let Settings {
             sdk,
@@ -127,6 +153,7 @@ mod bridge {
         link(&sdk, defaults, libs);
     }
 
+    #[cfg(feature = "module-naoqi")]
     pub(super) fn build_naoqi() {
         let Settings { sdk, build, libs } = settings(
             "QI_MODULE_NAOQI",

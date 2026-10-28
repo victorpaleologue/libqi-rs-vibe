@@ -1,8 +1,8 @@
 //! Loading modules: what `qi::import` does in `libqi`, for the libraries of Rust modules.
 //!
 //! Modules are found like `libqi` finds them (see [`Finder`]): a module `name` is declared by a
-//! file `share/qi/module/<name>.mod` in one of the SDK prefixes, and its library is
-//! `lib/lib<name>.so` in one of them (a module named `a.b` lives in `lib/a/libb.so`).
+//! file `share/qi/module/<name>.mod` (containing `cpp`) in one of the SDK prefixes, and its
+//! library is `lib/lib<name>.so` in one of them (a module named `a.b` is `lib/a/libb.so`).
 //!
 //! Libraries are never unloaded: their threads run until the process exits, as with `libqi`.
 
@@ -29,35 +29,65 @@ pub struct ModuleInfo {
     pub path: PathBuf,
 }
 
-/// Finds modules in SDK prefixes, the directories `libqi` searches for its data and libraries.
+/// Finds modules in SDK prefixes, the directories `libqi` searches for its data and libraries,
+/// with the algorithm of `libqi` (`qi::path::findData`, `qi::path::findLib`).
 #[derive(Debug, Clone, Default)]
 pub struct Finder {
     prefixes: Vec<PathBuf>,
+    writable_data: Option<PathBuf>,
 }
 
 impl Finder {
-    /// A finder searching the given prefixes, in order.
+    /// A finder searching the given prefixes, in order, and no writable data directory.
     pub fn new(prefixes: impl IntoIterator<Item = PathBuf>) -> Self {
         Self {
             prefixes: prefixes.into_iter().collect(),
+            writable_data: None,
         }
     }
 
-    /// The prefixes of `libqi`: the SDK prefix (the `--qi-sdk-prefix` option, else the
-    /// `QI_SDK_PREFIX` environment variable, else the parent of the directory of the program),
-    /// then the prefixes of `QI_ADDITIONAL_SDK_PREFIXES` (separated by `:`).
+    /// The prefixes of `libqi`, in order:
+    ///
+    /// 1. the SDK prefix: the `--qi-sdk-prefix` option if given, else the `QI_SDK_PREFIX`
+    ///    environment variable;
+    /// 2. the prefix of the program: the parent of the directory of the executable;
+    /// 3. the prefixes of `QI_ADDITIONAL_SDK_PREFIXES` (separated by `:`);
+    /// 4. the directories listed in `share/qi/path.conf` of the first prefix.
+    ///
+    /// Module declarations are first searched in the writable data directory of `libqi`:
+    /// `$QI_WRITABLE_PATH/data`, else `~/.local/share`.
     pub fn from_environment(sdk_prefix: Option<PathBuf>) -> Self {
-        let sdk_prefix = sdk_prefix
-            .or_else(|| std::env::var_os("QI_SDK_PREFIX").map(PathBuf::from))
+        let mut prefixes = Vec::new();
+        prefixes
+            .extend(sdk_prefix.or_else(|| std::env::var_os("QI_SDK_PREFIX").map(PathBuf::from)));
+        if let Some(prefix) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent()?.parent().map(Path::to_owned))
+        {
+            prefixes.push(prefix);
+        }
+        if let Some(additional) = std::env::var_os("QI_ADDITIONAL_SDK_PREFIXES") {
+            prefixes
+                .extend(std::env::split_paths(&additional).filter(|p| !p.as_os_str().is_empty()));
+        }
+        if let Some(first) = prefixes.first().cloned() {
+            read_path_conf(&first.join("share/qi/path.conf"), &mut prefixes);
+        }
+        let mut unique = Vec::new();
+        for prefix in prefixes {
+            if !unique.contains(&prefix) {
+                unique.push(prefix);
+            }
+        }
+        let writable_data = std::env::var_os("QI_WRITABLE_PATH")
+            .map(|path| PathBuf::from(path).join("data"))
             .or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|exe| exe.parent()?.parent().map(Path::to_owned))
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
             });
-        let additional = std::env::var_os("QI_ADDITIONAL_SDK_PREFIXES")
-            .map(|prefixes| std::env::split_paths(&prefixes).collect::<Vec<_>>())
-            .unwrap_or_default();
-        Self::new(sdk_prefix.into_iter().chain(additional))
+        Self {
+            prefixes: unique,
+            writable_data,
+        }
     }
 
     /// The prefixes searched, in order.
@@ -66,13 +96,19 @@ impl Finder {
     }
 
     /// Finds a module by name, failing like `libqi` (`no module found: 'name'`) when no
-    /// prefix declares it.
+    /// declaration `qi/module/<name>.mod` is found (the dots of the name are kept).
     pub fn find(&self, name: &str) -> Result<ModuleInfo> {
         check_module_name(name)?;
+        let file = format!("{name}.mod");
         let declaration = self
-            .prefixes
+            .writable_data
             .iter()
-            .map(|prefix| prefix.join("share/qi/module").join(format!("{name}.mod")))
+            .map(|dir| dir.join("qi/module").join(&file))
+            .chain(
+                self.prefixes
+                    .iter()
+                    .map(|prefix| prefix.join("share/qi/module").join(&file)),
+            )
             .find(|path| path.is_file())
             .ok_or_else(|| Error::from(format!("no module found: '{name}'")))?;
         let kind = std::fs::read_to_string(&declaration)?
@@ -81,12 +117,14 @@ impl Finder {
             .unwrap_or_default()
             .to_owned();
         debug!(module = name, declaration = %declaration.display(), %kind, "module found");
-        let path = self.find_library(&name.replace('.', "/")).ok_or_else(|| {
-            Error::from(format!(
-                "Could not open {name}: the library of the module was not found in {:?}",
-                self.prefixes
-            ))
-        })?;
+        if kind != "cpp" {
+            return Err(format!("module factory for module type: {kind} is not available").into());
+        }
+        // A module `a.b` is the library `b` of the directory `a`.
+        let relative = name.replace('.', "/");
+        let path = self
+            .find_library(&relative)
+            .unwrap_or_else(|| PathBuf::from(&relative));
         Ok(ModuleInfo {
             name: name.to_owned(),
             kind,
@@ -94,19 +132,46 @@ impl Finder {
         })
     }
 
-    /// Finds a library by its path relative to the `lib` directories of the prefixes, with or
-    /// without the `lib` prefix and the `.so` suffix.
+    /// Finds a library like `qi::path::findLib`: `<relative>` from the current directory, then,
+    /// in the `lib` directory of each prefix, `<dir>/<name>`, `<dir>/<name>.so`,
+    /// `<dir>/lib<name>.so` and `<dir>/lib<name>`.
     pub fn find_library(&self, relative: &str) -> Option<PathBuf> {
-        let relative = Path::new(relative);
-        let dir = relative.parent().unwrap_or(Path::new(""));
-        let file = relative.file_name()?.to_string_lossy().into_owned();
-        let candidates = [format!("lib{file}.so"), format!("{file}.so"), file.clone()];
+        let relative_path = Path::new(relative);
+        if relative_path.is_file() {
+            return Some(relative_path.to_owned());
+        }
+        let dir = relative_path.parent().unwrap_or(Path::new(""));
+        let file = relative_path.file_name()?.to_string_lossy().into_owned();
+        let candidates = [
+            file.clone(),
+            format!("{file}.so"),
+            format!("lib{file}.so"),
+            format!("lib{file}"),
+        ];
         self.prefixes.iter().find_map(|prefix| {
             candidates
                 .iter()
                 .map(|candidate| prefix.join("lib").join(dir).join(candidate))
                 .find(|path| path.is_file())
         })
+    }
+}
+
+/// Adds the existing directories listed in a `path.conf` file (one per line, `#` comments),
+/// and those of the `path.conf` files of these directories.
+fn read_path_conf(path: &Path, prefixes: &mut Vec<PathBuf>) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for line in content.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let prefix = PathBuf::from(line);
+        if prefix.is_dir() && !prefixes.contains(&prefix) {
+            prefixes.push(prefix.clone());
+            read_path_conf(&prefix.join("share/qi/path.conf"), prefixes);
+        }
     }
 }
 
@@ -128,6 +193,7 @@ fn check_module_name(name: &str) -> Result<()> {
 /// A loaded module.
 pub struct Module {
     name: String,
+    factories: Vec<String>,
     path: PathBuf,
     object: AnyObject,
     _node: crate::Node<crate::service_directory::Client>,
@@ -140,7 +206,7 @@ impl Module {
     pub async fn load(path: impl Into<PathBuf>, space_url: Option<&str>) -> Result<Self> {
         let path = path.into();
         let space_url = space_url.map(str::to_owned);
-        let (library, name, endpoint) = tokio::task::spawn_blocking({
+        let (library, name, factories, endpoint) = tokio::task::spawn_blocking({
             let path = path.clone();
             move || open(&path, space_url.as_deref())
         })
@@ -157,6 +223,7 @@ impl Module {
         debug!(module = %name, path = %path.display(), %endpoint, "module loaded");
         Ok(Self {
             name,
+            factories,
             path,
             object,
             _node: node,
@@ -167,6 +234,11 @@ impl Module {
     /// The name of the module.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The names of the factories of the module, in declaration order.
+    pub fn factories(&self) -> &[String] {
+        &self.factories
     }
 
     /// The path of the library of the module.
@@ -190,7 +262,10 @@ impl std::fmt::Debug for Module {
 }
 
 /// Opens a library, reads its descriptor and starts the module. Blocking.
-fn open(path: &Path, space_url: Option<&str>) -> Result<(libloading::Library, String, String)> {
+fn open(
+    path: &Path,
+    space_url: Option<&str>,
+) -> Result<(libloading::Library, String, Vec<String>, String)> {
     let failure =
         |message: String| Error::from(format!("Could not open {}: {message}", path.display()));
     // `libqi` opens modules with `RTLD_NOW`.
@@ -226,6 +301,15 @@ fn open(path: &Path, space_url: Option<&str>) -> Result<(libloading::Library, St
     let name = unsafe { CStr::from_ptr(descriptor.name) }
         .to_string_lossy()
         .into_owned();
+    let factories = (0..descriptor.factory_count)
+        .map(|index| {
+            // SAFETY: the factories of the descriptor are a static array of `factory_count`
+            // elements with static NUL-terminated names.
+            unsafe { CStr::from_ptr((*descriptor.factories.add(index)).name) }
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
     if let Some(url) = space_url {
         let key = CString::new("space-url").expect("no NUL");
         let value = CString::new(url).map_err(|err| failure(err.to_string()))?;
@@ -243,5 +327,5 @@ fn open(path: &Path, space_url: Option<&str>) -> Result<(libloading::Library, St
     if status != 0 {
         return Err(failure(format!("the module failed to start: {text}")));
     }
-    Ok((library, name, text))
+    Ok((library, name, factories, text))
 }

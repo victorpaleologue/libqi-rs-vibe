@@ -85,7 +85,9 @@ impl DcmPlugin for RustEyes {
         let Some(eyes) = &self.eyes else {
             return;
         };
-        if !DCM_STATE.led_animation.load(Ordering::Relaxed) || !cycles.is_multiple_of(CYCLES_PER_STEP) {
+        if !DCM_STATE.led_animation.load(Ordering::Relaxed)
+            || !cycles.is_multiple_of(CYCLES_PER_STEP)
+        {
             return;
         }
         let step = (cycles / CYCLES_PER_STEP % 8) as usize;

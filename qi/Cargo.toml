@@ -51,6 +51,7 @@ naoqi-sim = [
 # Modules: shared libraries exporting functions and object factories (`#[qi::module]`), loaded
 # by `libqi` hosts, NAOqi and `qi-launch`.
 module = [
+  "dep:cc",
   "dep:libc",
   "dep:libloading",
   "dep:tracing-subscriber",
@@ -123,6 +124,7 @@ cc = { version = "1.2.41", optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+libloading = "0.8.9"
 assert_matches = { workspace = true }
 clap = { workspace = true }
 pretty_assertions = { workspace = true }
@@ -149,6 +151,14 @@ required-features = ["naoqi-sim"]
 name = "qi-launch"
 path = "src/bin/qi-launch/main.rs"
 required-features = ["launch"]
+
+[[test]]
+name = "module"
+required-features = ["launch"]
+
+[[test]]
+name = "module_autoload"
+required-features = ["module"]
 
 [[test]]
 name = "cli"
