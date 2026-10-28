@@ -15,13 +15,18 @@
 //! ```ignore
 //! use qi::module::naoqi::{Alias, Cycle, DcmPlugin, MemoryF32, Naoqi, Update};
 //!
+//! const EYE_LED_KEYS: [&str; 2] = [
+//!     "Device/SubDeviceList/Face/Led/Blue/Left/0Deg/Actuator/Value",
+//!     "Device/SubDeviceList/Face/Led/Blue/Right/0Deg/Actuator/Value",
+//! ];
+//!
 //! struct EyesFollowHead { yaw: MemoryF32, eyes: Alias }
 //!
 //! impl DcmPlugin for EyesFollowHead {
 //!     fn pre_process(&mut self, cycle: &mut Cycle<'_>) {
 //!         let intensity = (self.yaw.get().abs() / 2.0).min(1.0);
 //!         let time = cycle.time(0).unwrap_or_default();
-//!         let _ = cycle.set_alias(&self.eyes, Update::ClearAll, time, &[intensity; 16]);
+//!         let _ = cycle.set_alias(&self.eyes, Update::ClearAll, time, &[intensity; 2]);
 //!     }
 //! }
 //!
@@ -31,7 +36,7 @@
 //!     pub fn eyes_follow_head(naoqi: &Naoqi<'_>) -> qi::Result<super::EyesFollowHead> {
 //!         Ok(super::EyesFollowHead {
 //!             yaw: naoqi.memory_f32("Device/SubDeviceList/HeadYaw/Position/Sensor/Value")?,
-//!             eyes: naoqi.create_alias("RustEyes", &EYE_LED_KEYS)?,
+//!             eyes: naoqi.create_alias("RustEyes", &super::EYE_LED_KEYS)?,
 //!         })
 //!     }
 //! }
@@ -419,7 +424,14 @@ unsafe fn run_callback(state: *mut c_void, f: impl FnOnce(&mut dyn DcmPlugin, &m
 
 unsafe extern "C" fn plugin_destroy(state: *mut c_void) {
     // SAFETY: `state` was created by `Box::into_raw` in `create`, and is destroyed once.
-    drop(unsafe { Box::from_raw(state.cast::<PluginState>()) });
+    let state = unsafe { Box::from_raw(state.cast::<PluginState>()) };
+    let name = state.def.name;
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(state))).is_err() {
+        tracing::error!(
+            plugin = name,
+            "the DCM plugin panicked while it was destroyed"
+        );
+    }
 }
 
 /// Creates the `ALModule`s of the DCM plugins of a module, from `_createModule`.

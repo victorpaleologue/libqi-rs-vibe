@@ -33,7 +33,7 @@ jobs:
         # The DCM bridge (feature module-naoqi) built against interop/naoqi-sdk-stub, and the
         # programs loading libraries the way NAOqi does.
         run: |
-          sudo apt-get install -y libboost-dev
+          sudo apt-get update && sudo apt-get install -y libboost-dev
           interop/naoqi-autoload/build.sh
           QI_INTEROP_REQUIRE=1 cargo test -p libqi-vibe --test interop_naoqi
       - name: Documentation

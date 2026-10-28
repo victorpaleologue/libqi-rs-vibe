@@ -21,7 +21,8 @@ pub struct Session(Arc<Inner>);
 
 #[derive(Default)]
 struct Inner {
-    url: Mutex<Option<String>>,
+    /// The URL of the space, and whether the node was started with it (it does not change then).
+    url: Mutex<(Option<String>, bool)>,
     listen_url: Mutex<Option<String>>,
     node: OnceCell<SpaceNode>,
 }
@@ -41,11 +42,25 @@ impl Session {
     /// Sets the URL of the space, unless the node is already connected; returns whether the URL
     /// is the one in use.
     pub(super) fn set_url(&self, url: String) -> bool {
-        if self.0.node.initialized() {
-            return self.url() == url;
+        let mut state = self.0.url.lock().expect("lock is not poisoned");
+        if state.1 {
+            return state
+                .0
+                .as_deref()
+                .map_or(super::default_space_url(), str::to_owned)
+                == url;
         }
-        *self.0.url.lock().expect("lock is not poisoned") = Some(url);
+        state.0 = Some(url);
         true
+    }
+
+    /// The URL of the space, which does not change after this call.
+    fn take_url(&self) -> String {
+        let mut state = self.0.url.lock().expect("lock is not poisoned");
+        state.1 = true;
+        let url = state.0.clone().unwrap_or_else(super::default_space_url);
+        state.0 = Some(url.clone());
+        url
     }
 
     /// Sets the URL the node listens on, unless it is already connected.
@@ -77,6 +92,7 @@ impl Session {
             .url
             .lock()
             .expect("lock is not poisoned")
+            .0
             .clone()
             .unwrap_or_else(super::default_space_url)
     }
@@ -86,7 +102,7 @@ impl Session {
         self.0
             .node
             .get_or_try_init(|| async {
-                let url = self.url();
+                let url = self.take_url();
                 let addresses = Address::resolve_all(&url).map_err(|err| {
                     Error::Other(format!("invalid space URL {url:?}: {err}").into())
                 })?;

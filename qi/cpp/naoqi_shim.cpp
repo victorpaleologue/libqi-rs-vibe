@@ -18,6 +18,8 @@
 
 #include <boost/bind.hpp>
 #include <boost/shared_ptr.hpp>
+#include <boost/thread/locks.hpp>
+#include <boost/thread/mutex.hpp>
 #include <boost/typeof/typeof.hpp>
 #include <cstddef>
 #include <cstring>
@@ -82,7 +84,7 @@ std::string& pendingError() {
 class RustDcmPlugin : public AL::ALModule {
  public:
   RustDcmPlugin(boost::shared_ptr<AL::ALBroker> broker, const std::string& name)
-      : AL::ALModule(broker, name), fPlugin(*pendingPlugin()), fConnected(false) {
+      : AL::ALModule(broker, name), fPlugin(*pendingPlugin()), fConnected(false), fDestroying(false) {
     setModuleDescription("A DCM plugin written in Rust");
     fApi.bridge = this;
     fApi.memory_data_ptr = &RustDcmPlugin::memoryDataPtr;
@@ -99,7 +101,7 @@ class RustDcmPlugin : public AL::ALModule {
     }
     char error[512] = {0};
     if (fPlugin.init(fPlugin.plugin, &fApi, error, sizeof error) != 0) {
-      pendingError() = error;
+      pendingError() = error[0] ? std::string(error) : std::string("the plugin failed to start");
       return;
     }
     try {
@@ -118,12 +120,28 @@ class RustDcmPlugin : public AL::ALModule {
       fPreProcess.disconnect();
       fPostProcess.disconnect();
     }
+    {
+      // A disconnection does not wait for a callback running on the thread of the DCM: wait for
+      // it here, and keep the later ones out.
+      boost::mutex::scoped_lock lock(fCallbackMutex);
+      fDestroying = true;
+    }
     fPlugin.destroy(fPlugin.plugin);
   }
 
  private:
-  void onPreProcess() { fPlugin.pre_process(fPlugin.plugin); }
-  void onPostProcess() { fPlugin.post_process(fPlugin.plugin); }
+  // The callbacks run on the thread of the DCM, which they never block: a cycle is skipped while
+  // the module is being destroyed.
+  void onPreProcess() {
+    boost::unique_lock<boost::mutex> lock(fCallbackMutex, boost::try_to_lock);
+    if (lock.owns_lock() && !fDestroying)
+      fPlugin.pre_process(fPlugin.plugin);
+  }
+  void onPostProcess() {
+    boost::unique_lock<boost::mutex> lock(fCallbackMutex, boost::try_to_lock);
+    if (lock.owns_lock() && !fDestroying)
+      fPlugin.post_process(fPlugin.plugin);
+  }
 
   static RustDcmPlugin* self(void* bridge) { return static_cast<RustDcmPlugin*>(bridge); }
 
@@ -223,6 +241,8 @@ class RustDcmPlugin : public AL::ALModule {
   std::vector<AL::ALValue> fCommands;
   std::vector<size_t> fCommandSizes;
   bool fConnected;
+  boost::mutex fCallbackMutex;
+  bool fDestroying;
   // The types the SDK gives to the module behind a proxy and to the connections of the
   // callbacks of the DCM (`ProcessSignalConnection`), as the expressions above have them.
   typedef BOOST_TYPEOF(((AL::ALProxy*)0)->getModule()) ModulePointer;

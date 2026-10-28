@@ -1,0 +1,5 @@
+error: duplicate service or ALModule name `Service`
+  --> tests/module/fail_duplicate_names.rs:11:12
+   |
+11 |     pub fn plugin(naoqi: &qi::module::naoqi::Naoqi<'_>) -> qi::Result<super::Plugin> {
+   |            ^^^^^^

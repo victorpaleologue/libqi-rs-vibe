@@ -26,4 +26,5 @@ for arch in i686 x86_64; do
   echo "$arch: newest glibc symbol version required:" \
     "$(objdump -T "$DIST/$arch/lib/librustexample.so" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)"
 done
+cp "$HERE/robot-README.md" "$DIST/README.md"
 echo "built in $DIST"

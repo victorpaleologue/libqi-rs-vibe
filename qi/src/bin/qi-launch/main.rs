@@ -129,6 +129,21 @@ struct Cli {
     #[arg(long = "qi-log-level", value_name = "LEVEL")]
     log_level: Option<String>,
 
+    /// The writable path of libqi: module declarations are searched in its `data/qi/module`
+    /// first (sets QI_WRITABLE_PATH).
+    #[arg(long = "writable-path", value_name = "PATH")]
+    writable_path: Option<PathBuf>,
+
+    // The other options of libqi, accepted for compatibility, without effect.
+    #[arg(long = "qi-log-context", hide = true, value_name = "N")]
+    _qi_log_context: Option<String>,
+    #[arg(long = "qi-log-synchronous", hide = true)]
+    _qi_log_synchronous: bool,
+    #[arg(long = "qi-log-color", hide = true, value_name = "WHEN")]
+    _qi_log_color: Option<String>,
+    #[arg(long = "qi-log-filters", hide = true, value_name = "FILTERS")]
+    _qi_log_filters: Option<String>,
+
     /// Libraries to load like the qi-launch of NAOqi 2.1 does: a path, or a name found in the
     /// lib directories of the prefixes.
     #[arg(value_name = "LIBRARIES")]
@@ -142,6 +157,14 @@ enum Space {
 }
 
 impl Space {
+    /// Waits until the link to the service directory is lost (never, for a hosted space).
+    async fn disconnected(&self) {
+        match self {
+            Self::Connected(node) => node.service_directory().object().disconnected().await,
+            Self::Hosted(_) => std::future::pending().await,
+        }
+    }
+
     async fn register_service(&self, name: &str, object: AnyObject) -> qi::Result<()> {
         match self {
             Self::Connected(node) => node.register_service_object(name, object).await,
@@ -200,6 +223,10 @@ fn split_member(full: &str) -> (&str, &str) {
 fn complete_url(url: &str, default_host: &str, default_port: u16) -> String {
     let (scheme, rest) = url.split_once("://").unwrap_or(("tcp", url));
     let rest = if rest.is_empty() { default_host } else { rest };
+    // A port without host (`tcp://:9999`) is on the default host.
+    if let Some(port) = rest.strip_prefix(':') {
+        return format!("{scheme}://{default_host}:{port}");
+    }
     let has_port = rest
         .rsplit_once(':')
         .is_some_and(|(host, port)| !host.ends_with(':') && port.parse::<u16>().is_ok());
@@ -212,6 +239,10 @@ fn complete_url(url: &str, default_host: &str, default_port: u16) -> String {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Some(path) = &cli.writable_path {
+        // Before any other thread exists.
+        std::env::set_var("QI_WRITABLE_PATH", path);
+    }
     if let Err(err) = init_logging(cli.log_level.as_deref()) {
         eprintln!("qi-launch: {err:#}");
     }
@@ -279,7 +310,7 @@ async fn run(mut cli: Cli) -> u8 {
         exit_status: Arc::clone(&exit_status),
     };
     // The space and the modules live until the launcher exits.
-    let _launched = match launch(&cli, &objects, &mut calls, &context).await {
+    let (space, _modules) = match launch(&cli, &objects, &mut calls, &context).await {
         Ok(launched) => launched,
         Err(err) => {
             error!("{err:#}");
@@ -288,7 +319,11 @@ async fn run(mut cli: Cli) -> u8 {
     };
 
     if !objects.is_empty() || !cli.libraries.is_empty() || cli.keep_running {
-        stop.notified().await;
+        // Like qilaunch, the launcher also stops when it loses the service directory.
+        tokio::select! {
+            () = stop.notified() => {}
+            () = space.disconnected() => info!("Disconnected from the service directory, exiting"),
+        }
         cancel.cancel();
     }
     // Waits for the functions, canceled or not.

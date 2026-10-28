@@ -58,14 +58,17 @@ impl Finder {
     /// `$QI_WRITABLE_PATH/data`, else `~/.local/share`.
     pub fn from_environment(sdk_prefix: Option<PathBuf>) -> Self {
         let mut prefixes = Vec::new();
-        prefixes
-            .extend(sdk_prefix.or_else(|| std::env::var_os("QI_SDK_PREFIX").map(PathBuf::from)));
-        if let Some(prefix) = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent()?.parent().map(Path::to_owned))
-        {
-            prefixes.push(prefix);
-        }
+        // An empty prefix is no prefix, as for libqi.
+        prefixes.extend(
+            sdk_prefix
+                .filter(|prefix| !prefix.as_os_str().is_empty())
+                .or_else(|| {
+                    std::env::var_os("QI_SDK_PREFIX")
+                        .filter(|prefix| !prefix.is_empty())
+                        .map(PathBuf::from)
+                }),
+        );
+        prefixes.extend(program_prefix());
         if let Some(additional) = std::env::var_os("QI_ADDITIONAL_SDK_PREFIXES") {
             prefixes
                 .extend(std::env::split_paths(&additional).filter(|p| !p.as_os_str().is_empty()));
@@ -155,6 +158,32 @@ impl Finder {
                 .find(|path| path.is_file())
         })
     }
+}
+
+/// The prefix of the program, as `libqi` finds it: the parent of the directory of the program as
+/// it was invoked (symbolic links kept) when that prefix has a `share/qi/path.conf`, else the one
+/// of the program itself.
+fn program_prefix() -> Option<PathBuf> {
+    let prefix_of = |program: &Path| program.parent()?.parent().map(Path::to_owned);
+    let invoked = std::env::args_os()
+        .next()
+        .map(PathBuf::from)
+        .and_then(|program| {
+            if program.components().count() > 1 {
+                std::env::current_dir().ok().map(|dir| dir.join(&program))
+            } else {
+                std::env::var_os("PATH").and_then(|path| {
+                    std::env::split_paths(&path)
+                        .map(|dir| dir.join(&program))
+                        .find(|candidate| candidate.is_file())
+                })
+            }
+        });
+    invoked
+        .as_deref()
+        .and_then(prefix_of)
+        .filter(|prefix| prefix.join("share/qi/path.conf").is_file())
+        .or_else(|| std::env::current_exe().ok().as_deref().and_then(prefix_of))
 }
 
 /// Adds the existing directories listed in a `path.conf` file (one per line, `#` comments),
@@ -310,11 +339,20 @@ fn open(
                 .into_owned()
         })
         .collect();
-    if let Some(url) = space_url {
-        let key = CString::new("space-url").expect("no NUL");
-        let value = CString::new(url).map_err(|err| failure(err.to_string()))?;
+    let set_option = |key: &str, value: &str| -> Result<bool> {
+        let key = CString::new(key).map_err(|err| failure(err.to_string()))?;
+        let value = CString::new(value).map_err(|err| failure(err.to_string()))?;
         // SAFETY: the contract of `ModuleV1::set_option`: NUL-terminated strings.
-        if unsafe { (descriptor.set_option)(key.as_ptr(), value.as_ptr()) } != 0 {
+        Ok(unsafe { (descriptor.set_option)(key.as_ptr(), value.as_ptr()) } == 0)
+    };
+    // The module advertises its private space with the machine identifier of this process, which
+    // keeps only the loopback endpoints of the services of its own machine.
+    let machine_id = crate::value::os::MachineId::local().to_string();
+    if !set_option("machine-id", &machine_id)? {
+        debug!(%machine_id, "the module uses its own machine identifier");
+    }
+    if let Some(url) = space_url {
+        if !set_option("space-url", url)? {
             return Err(failure(format!("the module rejected the space URL {url}")));
         }
     }

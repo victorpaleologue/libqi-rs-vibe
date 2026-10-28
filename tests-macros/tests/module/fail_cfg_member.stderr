@@ -1,0 +1,5 @@
+error: `#[cfg]` is not supported on the members of a `#[qi::module]`: they are compiled in any configuration (the DCM API too, without its bridge); make the function private, or configure the body
+ --> tests/module/fail_cfg_member.rs:3:5
+  |
+3 |     #[cfg(feature = "something")]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

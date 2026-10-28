@@ -67,10 +67,13 @@ pub mod greetings {
 
 - Every `pub fn` of the module is a function, named after its identifier (`case = "camelCase"` on
   `#[qi::module]` converts the names; `#[qi::function(name = "...")]` sets one).
+- Functions cannot be named after the members every object has (`metaObject`, `property`...),
+  nor carry `#[cfg]`: members exist in every configuration.
 - `#[qi::factory]` marks a function returning an object: anything implementing `qi::Object`, such
   as the adapters `#[qi::object]` generates for typed interfaces. Its name is the `PascalCase` of
   its identifier unless `name = "..."` is given. `autoload` registers it when NAOqi loads the
-  library.
+  library: such factories take no parameter but the session. The hosts registering every factory
+  (the `qi-launch` of NAOqi 2.1, the library form of `qi-launch`) call them without arguments too.
 - Members are synchronous or `async`, return a `Result<T>` (whose error converts into
   `qi::Error`) or a plain value; their parameters and results are values of the type system.
 - A first parameter of type `qi::module::Session` is a handle to the space of the host: a node
@@ -94,7 +97,17 @@ applied with the shortest delay. It reads sensor values in place in the memory o
 sends commands with DCM aliases, without network nor serialization.
 
 ```rust
-use qi::module::naoqi::{Alias, Cycle, DcmPlugin, MemoryF32, Naoqi, Update};
+use qi::module::naoqi::{Alias, Cycle, DcmPlugin, MemoryF32, Update};
+
+/// The blue LEDs of the eyes, left then right, by angle.
+fn eye_led_keys() -> Vec<String> {
+    ["Left", "Right"]
+        .iter()
+        .flat_map(|side| {
+            (0..8).map(move |i| format!("Device/SubDeviceList/Face/Led/Blue/{side}/{}Deg/Actuator/Value", i * 45))
+        })
+        .collect()
+}
 
 struct Follow { yaw: MemoryF32, eyes: Alias }
 
@@ -112,9 +125,11 @@ pub mod follow {
     /// Creates the ALModule `Follow` when NAOqi loads the library.
     #[qi::dcm(name = "Follow")]
     pub fn follow(naoqi: &qi::module::naoqi::Naoqi<'_>) -> qi::Result<super::Follow> {
+        let keys = super::eye_led_keys();
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         Ok(super::Follow {
             yaw: naoqi.memory_f32("Device/SubDeviceList/HeadYaw/Position/Sensor/Value")?,
-            eyes: naoqi.create_alias("FollowEyes", &EYE_LED_KEYS)?,
+            eyes: naoqi.create_alias("FollowEyes", &keys)?,
         })
     }
 }
@@ -223,7 +238,12 @@ The library and its declaration go in an SDK prefix, for instance `/home/nao/rus
   qi-launch --qi-url tcp://nao.local:9559 --qi-sdk-prefix ./prefix -n demo -o rustexample.RustGreeter
   ```
 
-Then, from any machine: `qicli call RustGreeter.greet Nao`, `qicli call RustDcm.cycles`.
+Then `qicli call RustGreeter.greet Nao`. With the autoload, the services listen on every interface
+and are reachable from other machines (`qicli --qi-url tcp://<robot>:9559 call RustDcm.cycles`).
+`qilaunch` and `qi-launch` listen on `tcp://127.0.0.1:0` unless told otherwise
+(`--qi-listen-url tcp://0.0.0.0:0`, or `-a` for `qi-launch`): their services are then reachable
+from the robot only. `RustDcm` is registered by the autoload and by the library form of
+`qi-launch`; `-o rustexample.RustDcm` registers it explicitly.
 
 ## `qi-launch`
 

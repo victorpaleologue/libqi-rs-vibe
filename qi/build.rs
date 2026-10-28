@@ -128,13 +128,21 @@ mod bridge {
             "the feature `module-cpp` builds the libqi entry points of modules against a libqi SDK",
         );
         let include = sdk.join("include");
-        let libqi21 = include.join("qitype/objectfactory.hpp").is_file();
-        if !libqi21 && !include.join("qi/anymodule.hpp").is_file() {
+        // libqi 2.3 to 2.9 may install the compatibility headers of libqitype too.
+        let modern = include.join("qi/anymodule.hpp").is_file();
+        let libqi21 = !modern && include.join("qitype/objectfactory.hpp").is_file();
+        if !libqi21 && !modern {
             panic!(
                 "{} is not a libqi SDK: neither qi/anymodule.hpp (libqi 2.3 and later) nor \
                  qitype/objectfactory.hpp (libqi 2.1) is in its include directory",
                 sdk.display()
             );
+        }
+        // libqi 2.3 and 2.4 do not unwrap the futures methods return (libqi 2.5 added it, with
+        // `Session::_callModule`).
+        let session = std::fs::read_to_string(include.join("qi/session.hpp")).unwrap_or_default();
+        if modern && !session.contains("_callModule") {
+            build.define("QI_RS_SHIM_SYNC_RESULT", None);
         }
         if libqi21 {
             build.define("QI_RS_SHIM_LIBQI21", None);

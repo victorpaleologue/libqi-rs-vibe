@@ -125,6 +125,22 @@ pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
     let mut dcm_plugins = Vec::new();
     for item in items.iter_mut() {
         if let Item::Fn(func) = item {
+            if let Some(attr) = func
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+            {
+                if extract_tag(&mut func.attrs.clone())?.is_some()
+                    || matches!(func.vis, Visibility::Public(_))
+                {
+                    return Err(Error::new_spanned(
+                        attr,
+                        "`#[cfg]` is not supported on the members of a `#[qi::module]`: they are \
+                         compiled in any configuration (the DCM API too, without its bridge); \
+                         make the function private, or configure the body",
+                    ));
+                }
+            }
             match parse_member(func, args.case)? {
                 Some(Parsed::Member(member)) => members.push(*member),
                 Some(Parsed::Dcm(plugin)) => dcm_plugins.push(plugin),
@@ -134,10 +150,34 @@ pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
     }
     let mut names = std::collections::HashSet::new();
     for member in &members {
+        if RESERVED_NAMES.contains(&member.name.as_str()) {
+            return Err(Error::new_spanned(
+                &member.ident,
+                format!(
+                    "`{}` is a member of every object: name the function otherwise, with \
+                     `#[qi::function(name = \"...\")]`",
+                    member.name
+                ),
+            ));
+        }
         if !names.insert(member.name.as_str()) {
             return Err(Error::new_spanned(
                 &member.ident,
                 format!("duplicate module member name `{}`", member.name),
+            ));
+        }
+    }
+    // Factories and DCM plugins become services and ALModules of NAOqi, named after them.
+    let mut services: std::collections::HashSet<&str> = members
+        .iter()
+        .filter(|member| member.factory.is_some())
+        .map(|member| member.name.as_str())
+        .collect();
+    for plugin in &dcm_plugins {
+        if !services.insert(plugin.name.as_str()) {
+            return Err(Error::new_spanned(
+                &plugin.ident,
+                format!("duplicate service or ALModule name `{}`", plugin.name),
             ));
         }
     }
@@ -152,6 +192,25 @@ pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
     );
     Ok(quote!(#item))
 }
+
+/// The members of every object (the special members of the protocol, and the `Manageable` ones
+/// libqi adds), which module functions cannot be named after.
+const RESERVED_NAMES: &[&str] = &[
+    "registerEvent",
+    "unregisterEvent",
+    "metaObject",
+    "terminate",
+    "property",
+    "setProperty",
+    "properties",
+    "registerEventWithSignature",
+    "isStatsEnabled",
+    "enableStats",
+    "stats",
+    "clearStats",
+    "isTraceEnabled",
+    "enableTrace",
+];
 
 fn check_module_name(name: &str, span: &Ident) -> Result<()> {
     if name.is_empty()
@@ -237,6 +296,16 @@ fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option
             continue;
         }
         params.push((pat.ident.clone(), (*pat_type.ty).clone()));
+    }
+
+    if let Some(Factory { autoload: true }) = factory {
+        if let Some((ident, _)) = params.first() {
+            return Err(Error::new_spanned(
+                ident,
+                "`autoload` factories take no parameter but the session: NAOqi creates their \
+                 object without argument",
+            ));
+        }
     }
 
     let output = match &sig.output {

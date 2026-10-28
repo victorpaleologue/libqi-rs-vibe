@@ -139,14 +139,18 @@ std::string spaceUrl(const qi::SessionPtr& session) {
   return url.str();
 }
 
+// The URL of the space is given to the module before any member forwarded with a session runs:
+// the first call holds the others until the URL is set.
+boost::mutex& sessionMutex() {
+  static boost::mutex* mutex = new boost::mutex;
+  return *mutex;
+}
+
 void noteSession(Bridge* bridge, qi::AnyReference argument) {
   QI_RS_LOG_CATEGORY;
-  {
-    boost::mutex::scoped_lock lock(bridgeMutex());
-    if (bridge->spaceUrlSet)
-      return;
-    bridge->spaceUrlSet = true;
-  }
+  boost::mutex::scoped_lock lock(sessionMutex());
+  if (bridge->spaceUrlSet)
+    return;
   try {
     // The type interface of `qi::SessionPtr` instantiated in this library is not the one of
     // libqi, and libqi does not convert between them: compare the type identities instead.
@@ -163,7 +167,10 @@ void noteSession(Bridge* bridge, qi::AnyReference argument) {
   } catch (const std::exception& e) {
     qiLogVerbose() << "the first argument is not a session: " << e.what();
   }
+  bridge->spaceUrlSet = true;
 }
+
+#if !defined(QI_RS_SHIM_SYNC_RESULT)
 
 void adaptResult(qi::Future<qi::AnyReference> result, qi::Promise<qi::AnyValue> promise) {
   if (result.hasError())
@@ -174,27 +181,41 @@ void adaptResult(qi::Future<qi::AnyReference> result, qi::Promise<qi::AnyValue> 
     promise.setValue(qi::AnyValue(result.value(), false, true));
 }
 
-// A member of the module: forwards the call to the Rust module object, asynchronously. libqi
-// unwraps the future returned.
+void cancelCall(qi::Future<qi::AnyReference> call, qi::Promise<qi::AnyValue>&) {
+  call.cancel();
+}
+
+#endif
+
+// A member of the module: forwards the call to the Rust module object. From libqi 2.5, it returns
+// a future, which libqi unwraps, and cancels the call when the future is canceled; libqi 2.3 and
+// 2.4 do not unwrap futures, and the call is waited for (on the thread of the caller, never the
+// network thread of libqi: modules are called locally).
 qi::AnyReference forward(Bridge* bridge, unsigned int member, bool withSession,
                          const qi::AnyReferenceVector& args) {
+  size_t first = 0;
+  if (withSession && !args.empty()) {
+    noteSession(bridge, args[0]);
+    first = 1;
+  }
+  qi::GenericFunctionParameters params;
+  for (size_t i = first; i < args.size(); ++i)
+    params.push_back(args[i]);
+#if defined(QI_RS_SHIM_SYNC_RESULT)
+  // Errors are exceptions, which libqi reports as errors of the call.
+  return bridge->module.metaCall(member, params, qi::MetaCallType_Queued).value();
+#else
   qi::Promise<qi::AnyValue> promise;
   try {
-    size_t first = 0;
-    if (withSession && !args.empty()) {
-      noteSession(bridge, args[0]);
-      first = 1;
-    }
-    qi::GenericFunctionParameters params;
-    for (size_t i = first; i < args.size(); ++i)
-      params.push_back(args[i]);
     qi::Future<qi::AnyReference> result =
         bridge->module.metaCall(member, params, qi::MetaCallType_Queued);
+    promise.setOnCancel(boost::bind(&cancelCall, result, _1));
     result.connect(boost::bind(&adaptResult, _1, promise));
   } catch (const std::exception& e) {
     promise.setError(e.what());
   }
   return qi::AnyReference::from(promise.future()).clone();
+#endif
 }
 
 void advertise(qi::ModuleBuilder* builder, Bridge* bridge, const qi::MetaMethod& method,
