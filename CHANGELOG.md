@@ -28,8 +28,10 @@ released together.
 - `examples/rust-module`: the example module `rustexample` (functions, factories, the DCM plugin
   `RustEyes` and the `RustDcm` service reporting on it).
 - `MachineId::set_local`, for a module to advertise the machine identifier of its C++ host.
-- Tests against the real `qilaunch` (`interop/qilaunch/build.sh`, libqi 4.0.5), the `qi-launch` of
-  libqi 2.1 (`interop/cpp21/build-module.sh`), and programs loading libraries the way NAOqi does,
+- `ObjectClient::disconnected`: waits until the session to the remote object is closed.
+- Tests against the real `qilaunch` (`interop/qilaunch/build.sh`, libqi 4.0.5;
+  `interop/libqi-2.9`, the libqi of NAOqi 2.9), the `qi-launch` of libqi 2.1
+  (`interop/cpp21/build-module.sh`), and programs loading libraries the way NAOqi does,
   with a DCM loop over a stub of the NAOqi C++ SDK (`interop/naoqi-autoload`).
 
 ### Fixed
