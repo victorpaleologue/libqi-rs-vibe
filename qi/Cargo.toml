@@ -17,6 +17,10 @@ categories.workspace = true
 # The package is `libqi-vibe` on crates.io; the library is used as `qi`.
 name = "qi"
 
+[package.metadata.docs.rs]
+# The C++ bridges of modules need SDKs that docs.rs does not have.
+features = ["cli", "naoqi-sim", "launch"]
+
 [features]
 default = ["machine-uid"]
 # Derive the machine identifier from the operating system's machine id, like libqi.
