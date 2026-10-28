@@ -151,6 +151,10 @@ cargo zigbuild --release -p qi-module-example --target i686-unknown-linux-gnu.2.
 cargo zigbuild --release -p qi-module-example --target x86_64-unknown-linux-gnu.2.17
 ```
 
+`examples/rust-module/build-robot.sh` does it for both architectures, in `dist/rustexample-robot`
+(with the module declaration, an `autoload.ini` and instructions). The 32-bit library was loaded,
+`_createModule` included, on the glibc 2.13 of Debian 7.
+
 glibc 2.13 is older than the robots of NAOqi 2.1 are thought to have (check with
 `/lib/libc.so.6` on the robot). Rust's standard library references `getauxval`, which glibc
 added in 2.16: modules link a hidden fallback (`qi/cpp/glibc_compat.c`) calling the one of the C
@@ -298,3 +302,7 @@ the tests; `qi/tests/module_autoload.rs` (feature `module`) calls `_createModule
   libqi), whose API is the same for what the shim uses.
 - The private space of a module accepts any local connection, without authentication.
 - After a `fork` without `exec`, the threads of the module do not exist in the child.
+- The kernel of NAOqi 2.1 robots may be older than the 3.2 the Rust standard
+  library supports (`uname -r` tells); not tested.
+
+The open points are tracked in `docs/issues/` (16 to 18).
