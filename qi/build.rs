@@ -138,9 +138,12 @@ mod bridge {
         }
         if libqi21 {
             build.define("QI_RS_SHIM_LIBQI21", None);
-        } else if include.join("ka").is_dir() {
+        } else if include.join("qi/messaging/tcpscheme.hpp").is_file() {
             // libqi 3 and 4 require C++17, with the GNU extensions their log macros use.
             build.flag_if_supported("-std=gnu++17");
+        } else if build.is_flag_supported("-std=gnu++14").unwrap_or(false) {
+            // libqi 2.3 to 2.9, whose headers are not C++17 (libqi 2.9 with clang).
+            build.flag("-std=gnu++14");
         } else {
             build.flag_if_supported("-std=gnu++11");
         }

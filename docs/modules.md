@@ -287,6 +287,7 @@ the tests; `qi/tests/module_autoload.rs` (feature `module`) calls `_createModule
 |---|---|---|
 | `interop_qilaunch.rs` | the real `qilaunch`, on libqi 4.0.5 | `interop/qilaunch/build.sh` |
 | `interop_cpp21_module.rs` | the `qi-launch` and `qi-master` of libqi 2.1 | `interop/cpp21/libqi-2.1/build-libqi-2.1.sh`, `interop/cpp21/build-module.sh` |
+| (manual) `interop/libqi-2.9/run.sh` | the real `qilaunch`, on the libqi of NAOqi 2.9 | `interop/libqi-2.9/build.sh` (Ubuntu 18.04 container) |
 | `interop_naoqi.rs` | `fake-naoqi` (`_createModule` with a `boost::shared_ptr` broker) and `fake-dcm` (the loop of a DCM, against the stub of the NAOqi SDK of `interop/naoqi-sdk-stub`) | `interop/naoqi-autoload/build.sh` |
 
 ## Limitations and what is not verified
@@ -297,9 +298,9 @@ the tests; `qi/tests/module_autoload.rs` (feature `module`) calls `_createModule
   DCM plugins use (`ALModule::createModule`, `getParentBroker()->getDcmProxy()`,
   `getProxy("DCM")->getModule()->atPreProcess(...)`, `ALMemoryProxy::getDataPtr`,
   `DCMProxy::createAlias/setAlias/getTime`, `ALValue`), not against the SDK itself.
-- The libqi shim is tested against libqi 4.0.5 (with the real `qilaunch`) and libqi 2.1 (with its
-  `qi-launch`), built from source; not against the libqi of NAOqi 2.9 (the `release-2.9` branch of
-  libqi), whose API is the same for what the shim uses.
+- The libqi shim is tested against libqi 4.0.5 and the libqi of NAOqi 2.9 (the `release-2.9`
+  branch of libqi) with the real `qilaunch`, and libqi 2.1 with its `qi-launch`, all built from
+  source: not against the libraries of a robot, built by its toolchain.
 - The private space of a module accepts any local connection, without authentication.
 - After a `fork` without `exec`, the threads of the module do not exist in the child.
 - The kernel of NAOqi 2.1 robots may be older than the 3.2 the Rust standard
