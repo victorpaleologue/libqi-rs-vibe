@@ -22,6 +22,8 @@ pub struct ModuleDef {
     pub factories: &'static [FactoryDef],
     /// Creates the module object, whose methods are the functions and factories of the module.
     pub object: fn(Session) -> AnyObject,
+    /// The DCM plugins of the module, created when NAOqi loads the library.
+    pub dcm_plugins: &'static [super::naoqi::DcmDef],
     #[doc(hidden)]
     pub state: State,
 }
@@ -220,13 +222,17 @@ impl ModuleDef {
     pub fn autoload(&'static self) {
         let factories: Vec<_> = self.factories.iter().filter(|f| f.autoload).collect();
         let runtime = self.runtime();
-        self.session().set_listen_url("tcp://0.0.0.0:0".to_owned());
         info!(
             module = self.name,
             url = %self.session().url(),
             services = ?factories.iter().map(|f| f.name).collect::<Vec<_>>(),
+            dcm_plugins = ?self.dcm_plugins.iter().map(|p| p.name).collect::<Vec<_>>(),
             "module loaded by NAOqi"
         );
+        if factories.is_empty() {
+            return;
+        }
+        self.session().set_listen_url("tcp://0.0.0.0:0".to_owned());
         runtime.spawn(async move {
             let session = self.session();
             let node = session.node_with_retry(Duration::from_secs(1)).await;

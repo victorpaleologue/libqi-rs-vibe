@@ -1,42 +1,106 @@
-//! Builds the C++ shim of modules (feature `module-cpp`) against a libqi SDK.
+//! Builds the C++ bridges of modules against the SDKs of their hosts.
 //!
-//! The SDK is the installation prefix named by `QI_MODULE_CPP_SDK` (its `include` and `lib`
-//! directories). The API of the shim follows the SDK: libqi 2.3 and later (`qi/anymodule.hpp`)
-//! or libqi 2.1 (`qitype/objectfactory.hpp`). Other variables:
+//! - Feature `module-cpp`: the libqi entry points (`cpp/module_shim.cpp`), against the libqi SDK
+//!   named by `QI_MODULE_CPP_SDK` (an installation prefix, with `include` and `lib` directories).
+//!   The API follows the SDK: libqi 2.3 and later (`qi/anymodule.hpp`) or libqi 2.1
+//!   (`qitype/objectfactory.hpp`).
+//! - Feature `module-naoqi`: the `ALModule` of DCM plugins (`cpp/naoqi_shim.cpp`), against the
+//!   C++ SDK of NAOqi named by `QI_MODULE_NAOQI_SDK` (the `naoqi-sdk`, or the sysroot of the cross
+//!   toolchain of the robot), linked with `alcommon`, `alproxies`, `alvalue` and `alerror` unless
+//!   `QI_MODULE_NAOQI_LIBS` says otherwise.
 //!
-//! - `QI_MODULE_CPP_INCLUDES`: more include directories (Boost...), separated by `:`;
-//! - `QI_MODULE_CPP_FLAGS`: more compiler flags, separated by spaces (such as
-//!   `-D_GLIBCXX_USE_CXX11_ABI=0` or `--sysroot=...`);
-//! - `QI_MODULE_CPP_LIBS`: more libraries to link, separated by `:` (`boost_system`...);
-//! - `CXX`, `CXXFLAGS` (and their target-specific variants): the compiler, as for the `cc` crate.
+//! For each of them, `<PREFIX>_INCLUDES` adds include directories (separated by `:`),
+//! `<PREFIX>_FLAGS` compiler flags (separated by spaces, such as `-D_GLIBCXX_USE_CXX11_ABI=0`
+//! or `--sysroot=...`) and `<PREFIX>_LIBS` libraries (separated by `:`), where `<PREFIX>` is
+//! `QI_MODULE_CPP` or `QI_MODULE_NAOQI`. The compiler is the one of the `cc` crate (`CXX`,
+//! `CXXFLAGS` and their target-specific variants).
 
 fn main() {
     #[cfg(feature = "module-cpp")]
-    shim::build();
+    bridge::build_libqi();
+    #[cfg(feature = "module-naoqi")]
+    bridge::build_naoqi();
 }
 
-#[cfg(feature = "module-cpp")]
-mod shim {
-    use std::{env, path::PathBuf};
+#[cfg(any(feature = "module-cpp", feature = "module-naoqi"))]
+mod bridge {
+    use std::{
+        env,
+        path::{Path, PathBuf},
+    };
 
-    pub(super) fn build() {
-        for var in [
-            "QI_MODULE_CPP_SDK",
-            "QI_MODULE_CPP_INCLUDES",
-            "QI_MODULE_CPP_FLAGS",
-            "QI_MODULE_CPP_LIBS",
-        ] {
-            println!("cargo:rerun-if-env-changed={var}");
+    struct Settings {
+        sdk: PathBuf,
+        build: cc::Build,
+        libs: Option<String>,
+    }
+
+    fn settings(prefix: &str, source: &str, what: &str) -> Settings {
+        for suffix in ["SDK", "INCLUDES", "FLAGS", "LIBS"] {
+            println!("cargo:rerun-if-env-changed={prefix}_{suffix}");
         }
-        println!("cargo:rerun-if-changed=cpp/module_shim.cpp");
-
-        let sdk = PathBuf::from(env::var_os("QI_MODULE_CPP_SDK").unwrap_or_else(|| {
+        println!("cargo:rerun-if-changed={source}");
+        let sdk = PathBuf::from(env::var_os(format!("{prefix}_SDK")).unwrap_or_else(|| {
             panic!(
-                "the feature `module-cpp` builds the libqi entry points of modules against a \
-                 libqi SDK: set QI_MODULE_CPP_SDK to its installation prefix (the directory of \
-                 its `include` and `lib` directories)"
+                "{what}: set {prefix}_SDK to the installation prefix of the SDK (the directory \
+                 of its `include` and `lib` directories)"
             )
         }));
+        let mut build = cc::Build::new();
+        build
+            .cpp(true)
+            .file(source)
+            .include(sdk.join("include"))
+            .warnings(false)
+            .pic(true)
+            // Boost 1.73 and later warn about the global placeholders of `boost::bind`, which the
+            // Boost of old SDKs only has.
+            .define("BOOST_BIND_GLOBAL_PLACEHOLDERS", None);
+        if let Some(includes) = env::var_os(format!("{prefix}_INCLUDES")) {
+            for dir in env::split_paths(&includes) {
+                build.include(dir);
+            }
+        }
+        if let Ok(flags) = env::var(format!("{prefix}_FLAGS")) {
+            for flag in flags.split_whitespace() {
+                build.flag(flag);
+            }
+        }
+        let libs = env::var(format!("{prefix}_LIBS")).ok();
+        Settings { sdk, build, libs }
+    }
+
+    fn link(sdk: &Path, defaults: &[&str], libs: Option<String>) {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            sdk.join("lib").display()
+        );
+        let libs = match libs {
+            Some(libs) => libs
+                .split(':')
+                .filter(|lib| !lib.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            None => defaults
+                .iter()
+                .map(|lib| (*lib).to_owned())
+                .collect::<Vec<_>>(),
+        };
+        for lib in libs {
+            println!("cargo:rustc-link-lib=dylib={lib}");
+        }
+    }
+
+    pub(super) fn build_libqi() {
+        let Settings {
+            sdk,
+            mut build,
+            libs,
+        } = settings(
+            "QI_MODULE_CPP",
+            "cpp/module_shim.cpp",
+            "the feature `module-cpp` builds the libqi entry points of modules against a libqi SDK",
+        );
         let include = sdk.join("include");
         let libqi21 = include.join("qitype/objectfactory.hpp").is_file();
         if !libqi21 && !include.join("qi/anymodule.hpp").is_file() {
@@ -46,48 +110,37 @@ mod shim {
                 sdk.display()
             );
         }
-
-        let mut build = cc::Build::new();
-        build
-            .cpp(true)
-            .file("cpp/module_shim.cpp")
-            .include(&include)
-            .warnings(false)
-            .pic(true);
-        if let Some(includes) = env::var_os("QI_MODULE_CPP_INCLUDES") {
-            for dir in env::split_paths(&includes) {
-                build.include(dir);
-            }
-        }
         if libqi21 {
             build.define("QI_RS_SHIM_LIBQI21", None);
-        } else {
-            // libqi 4 requires C++17, with the GNU extensions its log macros use.
+        } else if include.join("ka").is_dir() {
+            // libqi 3 and 4 require C++17, with the GNU extensions their log macros use.
             build.flag_if_supported("-std=gnu++17");
-        }
-        if let Ok(flags) = env::var("QI_MODULE_CPP_FLAGS") {
-            for flag in flags.split_whitespace() {
-                build.flag(flag);
-            }
+        } else {
+            build.flag_if_supported("-std=gnu++11");
         }
         build.compile("qi_module_shim");
-
-        println!(
-            "cargo:rustc-link-search=native={}",
-            sdk.join("lib").display()
-        );
-        let libraries: &[&str] = if libqi21 {
+        let defaults: &[&str] = if libqi21 {
             &["qimessaging", "qitype", "qi"]
         } else {
             &["qi"]
         };
-        for library in libraries {
-            println!("cargo:rustc-link-lib=dylib={library}");
+        link(&sdk, defaults, libs);
+    }
+
+    pub(super) fn build_naoqi() {
+        let Settings { sdk, build, libs } = settings(
+            "QI_MODULE_NAOQI",
+            "cpp/naoqi_shim.cpp",
+            "the feature `module-naoqi` builds the DCM plugins of modules against the C++ SDK of \
+             NAOqi",
+        );
+        if !sdk.join("include/alcommon/almodule.h").is_file() {
+            panic!(
+                "{} is not a NAOqi C++ SDK: alcommon/almodule.h is not in its include directory",
+                sdk.display()
+            );
         }
-        if let Ok(libs) = env::var("QI_MODULE_CPP_LIBS") {
-            for library in libs.split(':').filter(|library| !library.is_empty()) {
-                println!("cargo:rustc-link-lib=dylib={library}");
-            }
-        }
+        build.compile("qi_naoqi_shim");
+        link(&sdk, &["alcommon", "alproxies", "alvalue", "alerror"], libs);
     }
 }

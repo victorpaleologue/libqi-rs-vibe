@@ -5,10 +5,14 @@
 //! - `qilaunch` (NAOqi 2.3 to 2.9, built with the `cpp` feature against the libqi of the robot):
 //!   `qilaunch -n rustexample -o rustexample.RustGreeter`, or
 //!   `qilaunch -n rustexample -f 'rustexample.say("Hello from Rust")'`;
-//! - NAOqi (2.1 to 2.9), from its `autoload.ini`: the `RustGreeter` service is registered;
+//! - NAOqi (2.1 to 2.9), from its `autoload.ini`: the `RustGreeter` and `RustDcm` services are
+//!   registered, and, built with the `naoqi` feature against the C++ SDK of NAOqi, the DCM plugin
+//!   `RustEyes` runs in the loop of the DCM (see [`dcm`]);
 //! - `qi-launch`, the Rust counterpart of `qilaunch`, with the same options.
 //!
 //! See `docs/modules.md` at the root of the repository.
+
+pub mod dcm;
 
 use qi::{module::Session, Property, Signal};
 
@@ -75,8 +79,14 @@ impl Greeter for RustGreeter {
 /// An example module written in Rust.
 #[qi::module(case = "camelCase")]
 pub mod rustexample {
-    use super::{GreeterObject, RustGreeter};
-    use qi::{module::Session, ObjectExt};
+    use super::{
+        dcm::{DcmReportObject, RustDcm, RustEyes},
+        GreeterObject, RustGreeter,
+    };
+    use qi::{
+        module::{naoqi::Naoqi, Session},
+        ObjectExt,
+    };
 
     /// Returns a greeting.
     pub fn hello(name: String) -> String {
@@ -113,6 +123,18 @@ pub mod rustexample {
         Ok(GreeterObject::new(RustGreeter::new(session)))
     }
 
+    /// The service reporting on the DCM plugin, registered when NAOqi loads the library.
+    #[qi::factory(autoload)]
+    pub fn rust_dcm() -> DcmReportObject<RustDcm> {
+        DcmReportObject::new(RustDcm)
+    }
+
+    /// The DCM plugin: the ALModule `RustEyes`, created when NAOqi loads the library.
+    #[qi::dcm(name = "RustEyes")]
+    pub fn rust_eyes(naoqi: &Naoqi<'_>) -> qi::Result<RustEyes> {
+        RustEyes::new(naoqi)
+    }
+
     /// A greeter not registered by NAOqi, for `qilaunch -o rustexample.OtherGreeter`.
     #[qi::factory(name = "OtherGreeter")]
     pub async fn other_greeter(session: Session) -> qi::Result<GreeterObject<RustGreeter>> {
@@ -135,7 +157,16 @@ mod tests {
             .iter()
             .map(|f| (f.name, f.autoload))
             .collect();
-        assert_eq!(factories, [("RustGreeter", true), ("OtherGreeter", false)]);
+        assert_eq!(
+            factories,
+            [
+                ("RustGreeter", true),
+                ("RustDcm", true),
+                ("OtherGreeter", false)
+            ]
+        );
+        let plugins: Vec<_> = module.dcm_plugins.iter().map(|p| p.name).collect();
+        assert_eq!(plugins, ["RustEyes"]);
     }
 
     #[tokio::test]

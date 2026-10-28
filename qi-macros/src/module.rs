@@ -96,6 +96,16 @@ enum Tag {
         name: Option<String>,
         autoload: bool,
     },
+    Dcm {
+        name: Option<String>,
+    },
+}
+
+/// A DCM plugin of the module: a function tagged `#[qi::dcm]`.
+struct Dcm {
+    /// The name of the `ALModule` of the plugin.
+    name: String,
+    ident: Ident,
 }
 
 pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
@@ -112,10 +122,13 @@ pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
     check_module_name(&name, &item.ident)?;
 
     let mut members = Vec::new();
+    let mut dcm_plugins = Vec::new();
     for item in items.iter_mut() {
         if let Item::Fn(func) = item {
-            if let Some(member) = parse_member(func, args.case)? {
-                members.push(member);
+            match parse_member(func, args.case)? {
+                Some(Parsed::Member(member)) => members.push(*member),
+                Some(Parsed::Dcm(plugin)) => dcm_plugins.push(plugin),
+                None => {}
             }
         }
     }
@@ -131,7 +144,7 @@ pub(super) fn expand(args: Args, mut item: ItemMod) -> Result<TokenStream> {
 
     let qi = &args.crate_path;
     let description = doc_string(&item.attrs);
-    let generated = expand_module(qi, &name, &description, &members);
+    let generated = expand_module(qi, &name, &description, &members, &dcm_plugins);
     items.extend(
         syn::parse2::<syn::File>(generated)
             .expect("the generated items parse")
@@ -154,11 +167,28 @@ fn check_module_name(name: &str, span: &Ident) -> Result<()> {
     Ok(())
 }
 
+enum Parsed {
+    Member(Box<Member>),
+    Dcm(Dcm),
+}
+
 /// Parses an exported function: public functions and tagged ones. Strips the tag.
-fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option<Member>> {
+fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option<Parsed>> {
     let tag = extract_tag(&mut func.attrs)?;
     let is_public = matches!(func.vis, Visibility::Public(_));
     let tag = match tag {
+        Some(Tag::Dcm { name }) => {
+            let ident = func.sig.ident.clone();
+            if func.sig.asyncness.is_some() || func.sig.inputs.len() != 1 {
+                return Err(Error::new_spanned(
+                    &func.sig,
+                    "DCM plugins are created by `fn name(naoqi: &qi::module::naoqi::Naoqi<'_>) -> \
+                     qi::Result<P>`, with `P: qi::module::naoqi::DcmPlugin`",
+                ));
+            }
+            let name = name.unwrap_or_else(|| ident.unraw().to_string().to_case(Case::Pascal));
+            return Ok(Some(Parsed::Dcm(Dcm { name, ident })));
+        }
         Some(tag) => tag,
         None if is_public => Tag::Function { name: None },
         None => return Ok(None),
@@ -178,6 +208,7 @@ fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option
             name.unwrap_or_else(|| rust_name.to_case(Case::Pascal)),
             Some(Factory { autoload }),
         ),
+        Tag::Dcm { .. } => unreachable!("DCM plugins are parsed above"),
     };
 
     let mut takes_session = false;
@@ -213,7 +244,7 @@ fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option
         ReturnType::Type(_, ty) if is_result(ty) => Output::Result(result_ok_type(ty)?),
         ReturnType::Type(_, ty) => Output::Value((**ty).clone()),
     };
-    Ok(Some(Member {
+    Ok(Some(Parsed::Member(Box::new(Member {
         name,
         ident,
         description: doc_string(&func.attrs),
@@ -222,7 +253,7 @@ fn parse_member(func: &mut ItemFn, case: Option<Case<'static>>) -> Result<Option
         params,
         output,
         factory,
-    }))
+    }))))
 }
 
 /// Whether a type is the session of modules: a path ending with `Session`.
@@ -267,6 +298,7 @@ fn extract_tag(attrs: &mut Vec<Attribute>) -> Result<Option<Tag>> {
         }
         found = Some(match kind {
             "factory" => Tag::Factory { name, autoload },
+            "dcm" => Tag::Dcm { name },
             _ => Tag::Function { name },
         });
     }
@@ -283,11 +315,37 @@ fn tag_kind(attr: &Attribute) -> Option<&'static str> {
     match segments.as_slice() {
         [qi, tag] if qi == "qi" && tag == "function" => Some("function"),
         [qi, tag] if qi == "qi" && tag == "factory" => Some("factory"),
+        [qi, tag] if qi == "qi" && tag == "dcm" => Some("dcm"),
         _ => None,
     }
 }
 
-fn expand_module(qi: &Path, name: &str, description: &str, members: &[Member]) -> TokenStream {
+fn expand_module(
+    qi: &Path,
+    name: &str,
+    description: &str,
+    members: &[Member],
+    dcm_plugins: &[Dcm],
+) -> TokenStream {
+    let dcm_wrappers = dcm_plugins.iter().map(|plugin| {
+        let ident = &plugin.ident;
+        let wrapper = quote::format_ident!("__qi_dcm_{}", ident.unraw());
+        quote! {
+            #[doc(hidden)]
+            fn #wrapper(
+                naoqi: &#qi::module::naoqi::Naoqi<'_>,
+            ) -> #qi::Result<::std::boxed::Box<dyn #qi::module::naoqi::DcmPlugin>> {
+                self::#ident(naoqi)
+                    .map(|plugin| ::std::boxed::Box::new(plugin) as ::std::boxed::Box<dyn #qi::module::naoqi::DcmPlugin>)
+                    .map_err(::std::convert::Into::<#qi::Error>::into)
+            }
+        }
+    });
+    let dcm_defs = dcm_plugins.iter().map(|plugin| {
+        let name = &plugin.name;
+        let wrapper = quote::format_ident!("__qi_dcm_{}", plugin.ident.unraw());
+        quote!(#qi::module::naoqi::DcmDef { name: #name, create: #wrapper })
+    });
     let interface = Ident::new("__QiModuleInterface", Span::call_site());
     let object = Ident::new("__QiModuleInterfaceObject", Span::call_site());
     let qi_str = quote!(#qi).to_string().replace(' ', "");
@@ -375,6 +433,8 @@ fn expand_module(qi: &Path, name: &str, description: &str, members: &[Member]) -
             #(#implementations)*
         }
 
+        #(#dcm_wrappers)*
+
         #[doc(hidden)]
         fn __qi_module_object(session: #qi::module::Session) -> #qi::AnyObject {
             #qi::AnyObject::new(#object::new(__QiModuleImpl(session)))
@@ -387,6 +447,7 @@ fn expand_module(qi: &Path, name: &str, description: &str, members: &[Member]) -
             description: #description,
             factories: &[#(#factory_defs),*],
             object: __qi_module_object,
+            dcm_plugins: &[#(#dcm_defs),*],
             state: #qi::module::State::new(),
         };
 

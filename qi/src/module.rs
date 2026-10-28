@@ -46,6 +46,7 @@
 
 pub mod abi;
 pub mod host;
+pub mod naoqi;
 mod runtime;
 mod session;
 

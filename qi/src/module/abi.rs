@@ -16,8 +16,9 @@
 //! `_createModule` is declared by NAOqi as `extern "C" int _createModule(boost::shared_ptr<AL::ALBroker>)`.
 //! The C++ ABI of Linux (Itanium) passes a parameter of a class type that is not trivially
 //! copyable as a pointer to a temporary the caller owns, so the Rust implementation takes a
-//! pointer, which it ignores: the module reaches NAOqi through its network endpoint, not through
-//! the broker.
+//! pointer. The services of the module reach NAOqi through its network endpoint; only the DCM
+//! plugins (see [`naoqi`](super::naoqi)) use the broker, through the C++ bridge of the feature
+//! `module-naoqi`.
 
 #![allow(unsafe_code)]
 
@@ -115,10 +116,18 @@ pub unsafe fn start(module: &'static ModuleDef, out: *mut c_char, out_len: usize
     status
 }
 
-/// The implementation of `_createModule`.
+/// The implementation of `_createModule`: registers the services of the `autoload` factories
+/// (in the background, through the network) and creates the DCM plugins (in place, with the
+/// broker).
 #[doc(hidden)]
-pub fn create_module(module: &'static ModuleDef, _broker: *mut c_void) -> c_int {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| module.autoload())) {
+pub fn create_module(module: &'static ModuleDef, broker: *mut c_void) -> c_int {
+    let create = || {
+        module.autoload();
+        if !module.dcm_plugins.is_empty() {
+            super::naoqi::create(module.dcm_plugins, broker);
+        }
+    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(create)) {
         Ok(()) => 0,
         Err(_) => -1,
     }

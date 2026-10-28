@@ -62,6 +62,9 @@ module = [
 # The `libqi` entry points of modules (`qi_module_init`, and the factories of `libqi` 2.1), built
 # against the libqi SDK named by the `QI_MODULE_CPP_SDK` environment variable.
 module-cpp = ["module", "dep:cc"]
+# The DCM plugins of modules (`#[qi::dcm]`): their `ALModule` in NAOqi, built against the C++ SDK
+# of NAOqi named by the `QI_MODULE_NAOQI_SDK` environment variable.
+module-naoqi = ["module", "dep:cc"]
 # The `qi-launch` command: the counterpart of `qilaunch`, loading modules as services.
 launch = [
   "module",
