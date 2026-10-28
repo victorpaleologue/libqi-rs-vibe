@@ -51,6 +51,8 @@ pub mod dynamic;
 mod error;
 pub mod format;
 pub mod messaging;
+#[cfg(feature = "module")]
+pub mod module;
 #[cfg(feature = "naoqi-sim")]
 pub mod naoqi_sim;
 pub mod node;
@@ -78,6 +80,8 @@ pub use self::{
 };
 pub use async_trait::async_trait;
 pub use messaging::Address;
+#[cfg(feature = "module")]
+pub use qi_macros::module;
 pub use qi_macros::{object, FromValue, IntoValue, Reflect, ToValue, Valuable};
 
 pub type Result<T> = std::result::Result<T, Error>;

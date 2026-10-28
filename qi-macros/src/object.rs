@@ -54,7 +54,7 @@ impl Parse for Args {
     }
 }
 
-fn lit_str(expr: &Expr) -> Result<LitStr> {
+pub(super) fn lit_str(expr: &Expr) -> Result<LitStr> {
     match expr {
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
@@ -241,7 +241,7 @@ fn parse_method(func: &TraitItemFn) -> Result<Method> {
 }
 
 /// Extracts `T` from a return type `Result<T>` or `Result<T, E>`.
-fn result_ok_type(ty: &Type) -> Result<Type> {
+pub(super) fn result_ok_type(ty: &Type) -> Result<Type> {
     let error = || Error::new_spanned(ty, "object methods must return a `Result<T>`");
     let Type::Path(path) = ty else {
         return Err(error());
@@ -353,7 +353,7 @@ fn tag_options(attr: &Attribute) -> Result<TagOptions> {
 }
 
 /// Converts a Rust identifier to a member name, preserving leading underscores (hidden members).
-fn convert_name(ident: &str, case: Option<Case<'static>>) -> String {
+pub(super) fn convert_name(ident: &str, case: Option<Case<'static>>) -> String {
     let Some(case) = case else {
         return ident.to_owned();
     };
@@ -363,7 +363,7 @@ fn convert_name(ident: &str, case: Option<Case<'static>>) -> String {
 }
 
 /// The text of the documentation attributes, lines trimmed and joined.
-fn doc_string(attrs: &[Attribute]) -> String {
+pub(super) fn doc_string(attrs: &[Attribute]) -> String {
     let lines: Vec<String> = attrs
         .iter()
         .filter_map(|attr| match &attr.meta {

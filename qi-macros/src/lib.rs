@@ -1,4 +1,5 @@
 #![allow(clippy::wrong_self_convention)]
+mod module;
 mod object;
 mod value;
 
@@ -113,6 +114,62 @@ pub fn object(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as object::Args);
     let item = parse_macro_input!(item as syn::ItemTrait);
     object::expand(args, item)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+/// Declares a `qi` module: a shared library exporting functions and object factories.
+///
+/// Applied to an inline `mod` of a crate built as a `cdylib` (`crate-type = ["cdylib"]`; one
+/// module per library), this attribute keeps the module and makes the library a module that
+/// `libqi` hosts (`qilaunch`, NAOqi, Python's `qi.module`) and `qi-launch` load. See the
+/// `qi::module` documentation for how modules are loaded.
+///
+/// # Members
+///
+/// - Every `pub fn` or `pub async fn` of the module is a *function* of the module, named after
+///   its identifier. `#[qi::function(name = "...")]` sets its name (and exports a non-public
+///   function).
+/// - `#[qi::factory]` marks a *factory*: a function returning an object (any `qi::Object`, such
+///   as the adapters of `#[qi::object]` interfaces), named in `PascalCase` after its identifier
+///   unless `name = "..."` is given. `qilaunch -o module.Factory` registers its object as the
+///   service `Factory`. With `autoload`, NAOqi does the same when it loads the library from its
+///   `autoload.ini`.
+///
+/// Members may be synchronous or asynchronous, and return a `Result<T>` (whose error converts
+/// into `qi::Error`) or a plain value. Their parameters are values of the `qi` type system. A
+/// first parameter of type `qi::module::Session` receives a handle to the space of the host.
+/// Documentation comments become the descriptions of the module and of its members.
+///
+/// # Attribute arguments
+///
+/// - `name = "..."`: the name of the module (default: the identifier of the `mod`), which is the
+///   name of its library (`lib<name>.so`) and of its declaration (`share/qi/module/<name>.mod`).
+/// - `case = "camelCase"` (or any casing of the value macros): the casing of function names.
+/// - `crate = "path"`: the path of the `qi` crate (default `::qi`).
+///
+/// # Example
+///
+/// ```ignore
+/// #[qi::module]
+/// pub mod greetings {
+///     /// Says hello.
+///     pub fn hello(name: String) -> String {
+///         format!("Hello, {name}!")
+///     }
+///
+///     /// The greeter service.
+///     #[qi::factory(autoload)]
+///     pub fn greeter(session: qi::module::Session) -> qi::Result<GreeterObject<MyGreeter>> {
+///         Ok(GreeterObject::new(MyGreeter::new(session)))
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as module::Args);
+    let item = parse_macro_input!(item as syn::ItemMod);
+    module::expand(args, item)
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
