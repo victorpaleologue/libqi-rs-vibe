@@ -326,4 +326,4 @@ the tests; `qi/tests/module_autoload.rs` (feature `module`) calls `_createModule
 - The kernel of NAOqi 2.1 robots may be older than the 3.2 the Rust standard
   library supports (`uname -r` tells); not tested.
 
-The open points are tracked in `docs/issues/` (16 to 18).
+The open points are tracked in `docs/issues/` (16 to 18); [`robot-test-plan.md`](robot-test-plan.md) is the plan to check them on a NAO.
