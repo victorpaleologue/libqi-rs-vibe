@@ -37,7 +37,7 @@ name = "greetings"              # the library is libgreetings.so: the name of th
 crate-type = ["cdylib"]
 
 [dependencies]
-qi = { package = "libqi-vibe", version = "1", features = ["module"] }
+qi = { package = "libqi-vibe", version = "1.1", features = ["module"] }
 ```
 
 ```rust

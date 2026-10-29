@@ -9,6 +9,11 @@ released together.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+Modules written in Rust, loadable by NAOqi (2.1 and 2.9), `qilaunch` and `qi-launch`, with
+DCM plugins.
+
 ### Added
 
 - Modules written in Rust (feature `module`): `#[qi::module]` on a `mod` of a `cdylib` crate
@@ -121,6 +126,7 @@ See `docs/issues/`: no mutual TLS (`tcpsm://`), no `Manageable` statistics membe
 gateway mode, posts are not flushed at shutdown, and two pinned byte-level deviations in the
 runtime `Value` model (invalid dynamics, structure annotations inside dynamics).
 
-[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/victorpaleologue/libqi-rs-vibe/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/victorpaleologue/libqi-rs-vibe/releases/tag/v0.1.0
