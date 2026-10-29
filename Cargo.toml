@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 authors = ["Victor Paleologue <victor.paleologue@palaio.eu>", "Vincent Palancher"]
-version = "1.0.0"
+version = "1.1.0"
 license = "BSD-3-Clause"
 rust-version = "1.90"
 repository = "https://github.com/victorpaleologue/libqi-rs-vibe"

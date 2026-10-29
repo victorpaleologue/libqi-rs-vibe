@@ -81,7 +81,7 @@ launch = [
 ]
 
 [dependencies]
-qi-macros = { package = "libqi-macros-vibe", path = "../qi-macros", version = "1.0.0" }
+qi-macros = { package = "libqi-macros-vibe", path = "../qi-macros", version = "1.1.0" }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
