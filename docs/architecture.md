@@ -197,6 +197,18 @@ without a network round trip.
 Services registered by a peer are unregistered when its link closes, as the
 reference implementation does.
 
+## Modules
+
+With the feature `module`, `#[qi::module]` makes a `cdylib` crate a `qi` module
+([`docs/modules.md`](modules.md)). The library embeds its own copy of the crate and runs it on
+threads of its own; it serves the module object (the functions and factories of the module) from
+a private space on the loopback interface, which every host reaches with the messaging protocol:
+`qi-launch` through the `qi_rs_module_v1` descriptor, C++ libqi hosts through a shim forwarding the
+members of a `qi::ModuleBuilder` (feature `module-cpp`), NAOqi through `_createModule`, which
+registers the `autoload` services and creates the DCM plugins with a C++ bridge to
+`libalcommon` (feature `module-naoqi`). No Rust or C++ type crosses the boundary of the library:
+only C strings, integers and function pointers.
+
 ## Interoperability testing
 
 `interop/cpp` is a CMake project built against `libqi` 4.0.5 that provides a value

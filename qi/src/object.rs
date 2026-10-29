@@ -387,6 +387,12 @@ impl ObjectClient {
             .map_err(|err| ValueConversionError::MethodReturnValue(err).into())
     }
 
+    /// Waits until the session to the remote object is closed: the link to its node is lost
+    /// or closed.
+    pub async fn disconnected(&self) {
+        self.0.session.closed().await
+    }
+
     /// The identifier of the service the object belongs to.
     pub fn service_id(&self) -> service::Id {
         self.0.service_id

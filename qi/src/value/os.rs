@@ -22,9 +22,35 @@ use crate::value::{
 #[serde_as]
 pub struct MachineId(Uuid);
 
+/// The identifier of the local machine set by [`MachineId::set_local`].
+static LOCAL_OVERRIDE: std::sync::OnceLock<MachineId> = std::sync::OnceLock::new();
+
+/// The identifier of the local machine.
+static LOCAL: Lazy<MachineId> = Lazy::new(|| {
+    if let Some(id) = LOCAL_OVERRIDE.get() {
+        return *id;
+    }
+    MachineId::compute_local()
+});
+
 impl MachineId {
+    /// The identifier of the local machine, computed once per process.
     pub fn local() -> Self {
-        static LOCAL: Lazy<MachineId> = Lazy::new(|| {
+        *LOCAL
+    }
+
+    /// Sets the identifier of the local machine, before it is first used; returns whether it
+    /// is the one in use.
+    ///
+    /// Modules use it to share the identifier their C++ host computed: `libqi` keeps loopback
+    /// endpoints only for the services of its own machine.
+    pub fn set_local(id: Self) -> bool {
+        LOCAL_OVERRIDE.set(id).ok();
+        Self::local() == id
+    }
+
+    fn compute_local() -> Self {
+        {
             if let Some(id) = MachineId::from_config() {
                 return id;
             }
@@ -40,8 +66,7 @@ impl MachineId {
                 }
                 MachineId(uuid)
             })
-        });
-        *LOCAL
+        }
     }
 
     fn from_config() -> Option<Self> {

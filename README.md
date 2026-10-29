@@ -30,7 +30,8 @@ named `qi`, so `use qi::...` works as in the examples. Rust 1.90 or later is req
 
 The command-line tools are features of the same crate:
 `cargo install libqi-vibe --features cli --bin qi-cli` and
-`cargo install libqi-vibe --features naoqi-sim --bin naoqi-sim`; prebuilt binaries for Linux, macOS and Windows are attached to
+`cargo install libqi-vibe --features naoqi-sim --bin naoqi-sim`,
+`cargo install libqi-vibe --features launch --bin qi-launch`; prebuilt binaries for Linux, macOS and Windows are attached to
 the [releases](https://github.com/victorpaleologue/libqi-rs-vibe/releases).
 
 ## Quick start
@@ -71,8 +72,8 @@ Two crates, released together:
 
 | Crate | Description |
 |---|---|
-| [`libqi-vibe`](qi/) (used as `qi`) | The framework. Modules: `qi::value` (type system, signatures, dynamic values), `qi::format` (binary format, as a `serde` data format), `qi::messaging` (messages, channels, client and server loops), nodes, sessions, objects, signals, properties, services and the service directory. Feature `cli`: the `qi-cli` command. Feature `naoqi-sim`: the `qi::naoqi_sim` module and the `naoqi-sim` command, a simulated NAOqi robot. |
-| [`libqi-macros-vibe`](qi-macros/) | Procedural macros (`#[qi::object]`, the value derives), re-exported by `libqi-vibe`. |
+| [`libqi-vibe`](qi/) (used as `qi`) | The framework. Modules: `qi::value` (type system, signatures, dynamic values), `qi::format` (binary format, as a `serde` data format), `qi::messaging` (messages, channels, client and server loops), nodes, sessions, objects, signals, properties, services and the service directory. Feature `cli`: the `qi-cli` command. Feature `naoqi-sim`: the `qi::naoqi_sim` module and the `naoqi-sim` command, a simulated NAOqi robot. Feature `module`: modules (`qi::module`), with the C++ bridges of features `module-cpp` (libqi) and `module-naoqi` (DCM plugins); feature `launch`: the `qi-launch` command. |
+| [`libqi-macros-vibe`](qi-macros/) | Procedural macros (`#[qi::object]`, `#[qi::module]`, the value derives), re-exported by `libqi-vibe`. |
 
 The design is described in [`docs/architecture.md`](docs/architecture.md), and how the
 implementation was validated against `libqi`, the ROS 2 driver of the robots and the Arora
@@ -94,6 +95,11 @@ Implemented and tested against `libqi` 4.0.5:
   detected at connection and emulated on demand, validated against that `libqi` built from
   source (`interop/cpp21/`).
 
+- modules written in Rust (feature `module`, `#[qi::module]`): shared libraries exporting
+  functions, object factories and DCM plugins, loaded by NAOqi from its `autoload.ini`, by
+  `qilaunch` and the `qi-launch` of NAOqi 2.1 (feature `module-cpp`), and by `qi-launch`, the Rust
+  counterpart of `qilaunch` (see [`docs/modules.md`](docs/modules.md)).
+
 Not implemented yet: mutual TLS authentication (`tcpsm://`), the `Manageable` statistics
 and tracing members, and gateways. Known gaps and follow-ups are listed in
 [`docs/issues/`](docs/issues/).
@@ -106,6 +112,14 @@ and tracing members, and gateways. Known gaps and follow-ups are listed in
 qi-cli --url tcp://nao.local:9559 info ALTextToSpeech
 qi-cli --url tcp://nao.local:9559 call ALTextToSpeech.say "Hello"
 qi-cli --url tcp://nao.local:9559 call ALMemory.getData Device/SubDeviceList/Battery/Charge/Sensor/Value
+```
+
+`qi-launch` (feature `launch`) loads modules written in Rust like `qilaunch` does: it registers
+the objects of their factories as services and calls their functions:
+
+```sh
+qi-launch --qi-url tcp://nao.local:9559 --qi-sdk-prefix ./prefix -n demo -o rustexample.RustGreeter
+qi-launch --qi-url tcp://nao.local:9559 --qi-sdk-prefix ./prefix -n demo -f 'rustexample.say("Hello")'
 ```
 
 `naoqi-sim` runs a simulated NAO or Pepper that `libqi` clients (the ROS 2 `naoqi_driver2`

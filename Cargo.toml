@@ -3,6 +3,7 @@ members = [
   "qi",
   "qi-macros",
   "tests-macros",
+  "examples/rust-module",
 ]
 resolver = "2"
 

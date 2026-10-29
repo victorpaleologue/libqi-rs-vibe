@@ -17,6 +17,10 @@ categories.workspace = true
 # The package is `libqi-vibe` on crates.io; the library is used as `qi`.
 name = "qi"
 
+[package.metadata.docs.rs]
+# The C++ bridges of modules need SDKs that docs.rs does not have.
+features = ["cli", "naoqi-sim", "launch"]
+
 [features]
 default = ["machine-uid"]
 # Derive the machine identifier from the operating system's machine id, like libqi.
@@ -48,6 +52,33 @@ naoqi-sim = [
   "tokio/io-util",
   "tokio/io-std",
 ]
+# Modules: shared libraries exporting functions and object factories (`#[qi::module]`), loaded
+# by `libqi` hosts, NAOqi and `qi-launch`.
+module = [
+  "dep:cc",
+  "dep:libc",
+  "dep:libloading",
+  "dep:tracing-subscriber",
+  "tracing-subscriber/env-filter",
+  "tokio/rt-multi-thread",
+  "tokio/sync",
+  "tokio/time",
+]
+# The `libqi` entry points of modules (`qi_module_init`, and the factories of `libqi` 2.1), built
+# against the libqi SDK named by the `QI_MODULE_CPP_SDK` environment variable.
+module-cpp = ["module", "dep:cc"]
+# The DCM plugins of modules (`#[qi::dcm]`): their `ALModule` in NAOqi, built against the C++ SDK
+# of NAOqi named by the `QI_MODULE_NAOQI_SDK` environment variable.
+module-naoqi = ["module", "dep:cc"]
+# The `qi-launch` command: the counterpart of `qilaunch`, loading modules as services.
+launch = [
+  "module",
+  "dep:anyhow",
+  "dep:base64",
+  "dep:clap",
+  "dep:serde_json",
+  "tokio/signal",
+]
 
 [dependencies]
 qi-macros = { package = "libqi-macros-vibe", path = "../qi-macros", version = "1.0.0" }
@@ -61,6 +92,8 @@ futures = { workspace = true }
 machine-uid = { version = "0.5.4", optional = true }
 once_cell = { workspace = true }
 ordered-float = { workspace = true }
+libc = { version = "0.2.177", optional = true }
+libloading = { version = "0.8.9", optional = true }
 ouroboros = "0.18.5"
 pin-project-lite = { workspace = true }
 rcgen = { workspace = true }
@@ -90,8 +123,12 @@ rpassword = { version = "7.5", optional = true }
 serde_json = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
+[build-dependencies]
+cc = { version = "1.2.41", optional = true }
+
 [dev-dependencies]
 anyhow = { workspace = true }
+libloading = "0.8.9"
 assert_matches = { workspace = true }
 clap = { workspace = true }
 pretty_assertions = { workspace = true }
@@ -113,6 +150,19 @@ required-features = ["cli"]
 name = "naoqi-sim"
 path = "src/bin/naoqi-sim.rs"
 required-features = ["naoqi-sim"]
+
+[[bin]]
+name = "qi-launch"
+path = "src/bin/qi-launch/main.rs"
+required-features = ["launch"]
+
+[[test]]
+name = "module"
+required-features = ["launch"]
+
+[[test]]
+name = "module_autoload"
+required-features = ["module"]
 
 [[test]]
 name = "cli"

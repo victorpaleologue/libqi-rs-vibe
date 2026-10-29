@@ -19,3 +19,6 @@ Issues found during the work on this branch, one file each, ready to be filed on
 | 12 | [Upstream the Boost 1.90 / GCC 15 patches for ros-naoqi libqi, libqicore and naoqi_driver2](12-upstream-the-boost-1-90-gcc-15-patches-for-ros-naoqi-libqi-l.md) | documentation |
 | 14 | [Interop harness: libqi must be built from source by hand, and its absence is silent](14-interop-harness-libqi-must-be-built-from-source-by-hand-and-.md) | enhancement |
 | 15 | [NAOqi 2.1 compatibility: what is not covered yet](15-naoqi-2-1-what-is-not-covered.md) | documentation |
+| 16 | [The machine identifier ignores QI_WRITABLE_PATH, which libqi honors](16-machine-identifier-ignores-qi-writable-path.md) | bug |
+| 17 | [Modules: what is not verified on robots yet](17-modules-what-is-not-verified-on-robots.md) | documentation |
+| 18 | [The private space of a module accepts any local connection](18-the-private-space-of-a-module-accepts-any-local-connection.md) | enhancement |

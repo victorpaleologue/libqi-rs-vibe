@@ -21,14 +21,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
+      # Not --all-features: the C++ bridges of modules (module-cpp, module-naoqi) are built against
+      # SDKs of libqi and NAOqi named by environment variables (see docs/modules.md).
       - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features
+        run: cargo clippy --workspace --all-targets --features libqi-vibe/cli,libqi-vibe/naoqi-sim,libqi-vibe/launch
       - name: Test
         # The interoperability tests against C++ libqi are skipped: the harness is not built here
         # (see interop/cpp/README.md).
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --features libqi-vibe/cli,libqi-vibe/naoqi-sim,libqi-vibe/launch
+      - name: Modules against a stub of the NAOqi SDK
+        # The DCM bridge (feature module-naoqi) built against interop/naoqi-sdk-stub, and the
+        # programs loading libraries the way NAOqi does.
+        run: |
+          sudo apt-get update && sudo apt-get install -y libboost-dev
+          interop/naoqi-autoload/build.sh
+          QI_INTEROP_REQUIRE=1 cargo test -p libqi-vibe --test interop_naoqi
       - name: Documentation
-        run: cargo doc --workspace --no-deps --all-features
+        run: cargo doc --workspace --no-deps --features libqi-vibe/cli,libqi-vibe/naoqi-sim,libqi-vibe/launch
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -48,4 +57,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets --all-features
+      - run: cargo check --workspace --all-targets --features libqi-vibe/cli,libqi-vibe/naoqi-sim,libqi-vibe/launch

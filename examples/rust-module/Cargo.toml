@@ -1,0 +1,29 @@
+[package]
+name = "qi-module-example"
+description = "An example qi module written in Rust, loadable by qilaunch, NAOqi and qi-launch"
+publish = false
+
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+version.workspace = true
+rust-version.workspace = true
+
+[lib]
+# The library of the module `rustexample` must be `librustexample.so`.
+name = "rustexample"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The entry points of libqi (qilaunch, NAOqi's qi::import), built against the libqi SDK named by
+# the QI_MODULE_CPP_SDK environment variable.
+cpp = ["qi/module-cpp"]
+# The DCM plugin `RustEyes` (the ALModule NAOqi runs in the loop of its DCM), built against the
+# C++ SDK of NAOqi named by the QI_MODULE_NAOQI_SDK environment variable.
+naoqi = ["qi/module-naoqi"]
+
+[dependencies]
+qi = { package = "libqi-vibe", path = "../../qi", features = ["module"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

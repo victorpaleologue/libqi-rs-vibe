@@ -259,6 +259,11 @@ where
 pub(crate) struct Session(pub(crate) Arc<SessionState>);
 
 impl Session {
+    /// Waits until the messaging link is closed.
+    pub(crate) async fn closed(&self) {
+        self.0.closed.cancelled().await
+    }
+
     /// Establishes a session with a peer as the connecting side.
     pub(crate) async fn connect<MsgStream, MsgSink>(
         messages_in: MsgStream,

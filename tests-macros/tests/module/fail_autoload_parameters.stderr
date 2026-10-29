@@ -1,0 +1,5 @@
+error: `autoload` factories take no parameter but the session: NAOqi creates their object without argument
+ --> tests/module/fail_autoload_parameters.rs:4:20
+  |
+4 |     pub fn service(start: i32) -> qi::AnyObject {
+  |                    ^^^^^

@@ -9,6 +9,35 @@ released together.
 
 ## [Unreleased]
 
+### Added
+
+- Modules written in Rust (feature `module`): `#[qi::module]` on a `mod` of a `cdylib` crate
+  makes its public functions, its `#[qi::factory]` functions (objects; `autoload` ones are
+  registered when NAOqi loads the library) and its `#[qi::dcm]` functions (DCM plugins) a `qi`
+  module. Members taking a `qi::module::Session` reach the space of their host. The library
+  serves its members from a private loopback space and exports `qi_rs_module_v1` (hosts written
+  with this crate, `qi::module::host`), `_createModule`/`_closeModule` (NAOqi's `autoload.ini`) and,
+  with the feature `module-cpp` built against a libqi SDK, `qi_module_init` (`qilaunch`,
+  `qi::import` of libqi 2.3 and later) or the factory registration of libqi 2.1 (its `qi-launch`).
+  See `docs/modules.md`.
+- DCM plugins (`qi::module::naoqi`, feature `module-naoqi`, built against the C++ SDK of NAOqi):
+  an `ALModule` calling the plugin in the pre-process and post-process callbacks of the DCM, with
+  ALMemory values read in place and DCM aliases.
+- `qi-launch` (feature `launch`): the counterpart of `qilaunch`, with its options and behavior,
+  plus the positional libraries and `-a` of the `qi-launch` of NAOqi 2.1.
+- `examples/rust-module`: the example module `rustexample` (functions, factories, the DCM plugin
+  `RustEyes` and the `RustDcm` service reporting on it).
+- `MachineId::set_local`, for a module to advertise the machine identifier of its C++ host.
+- `ObjectClient::disconnected`: waits until the session to the remote object is closed.
+- Tests against the real `qilaunch` (`interop/qilaunch/build.sh`, libqi 4.0.5;
+  `interop/libqi-2.9`, the libqi of NAOqi 2.9), the `qi-launch` of libqi 2.1
+  (`interop/cpp21/build-module.sh`), and programs loading libraries the way NAOqi does,
+  with a DCM loop over a stub of the NAOqi C++ SDK (`interop/naoqi-autoload`).
+
+### Fixed
+
+- `interop/cpp21/libqi-2.1/Dockerfile` installs `git`, which `build-in-container.sh` uses.
+
 ## [1.0.0] - 2026-10-12
 
 NAOqi 2.1 robots, characterized against a NAO V4 running NAOqi 2.1.4.13.

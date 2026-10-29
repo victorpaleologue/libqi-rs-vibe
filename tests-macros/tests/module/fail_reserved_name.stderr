@@ -1,0 +1,5 @@
+error: `metaObject` is a member of every object: name the function otherwise, with `#[qi::function(name = "...")]`
+ --> tests/module/fail_reserved_name.rs:3:12
+  |
+3 |     pub fn meta_object() {}
+  |            ^^^^^^^^^^^
